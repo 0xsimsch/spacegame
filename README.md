@@ -21,7 +21,7 @@ cargo run --release -p server --bin bot -- --addr 127.0.0.1:47800 --count 4 --se
 Client command-line options (after `--`): `--host`, `--join HOST:PORT`, `--name N`,
 `--port P`, `--autotest [--shots DIR] [--expect-players N]`.
 
-Tests: `cargo test --workspace` (24 tests, including the three acceptance scripts) and
+Tests: `cargo test --workspace` (23 tests, including the three acceptance scripts) and
 `godot --headless --path godot -- --autotest --host --port 47891` (end-to-end client smoke test).
 
 ## Controls
