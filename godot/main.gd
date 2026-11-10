@@ -6,7 +6,7 @@ const HELP_TEXT := """[b]Controls[/b]
 WASD move, Space up, C down, Q/E roll (zero-g), mouse look
 J jetpack on/off (off = walk on planets, Space jumps)
 Z inertial dampeners, X cruise mode (raises speed cap to 5 km/s)
-G build mode: 1-6 or mouse wheel pick block, R/T rotate, B ship/station
+G build mode: 1-7 or mouse wheel pick block (7 = rotor), R/T rotate, B ship/station
     LMB place (on a block, or in empty space to start a new grid), RMB remove
 F use: sit in cockpit / edit programmable block / control a block
 K control panel of the grid you look at (or are seated in)
@@ -17,7 +17,8 @@ F3 stats overlay, Esc menu
   grid:block(name), grid:blocks(type?)  -> blocks of this grid and its sub-grids
   thruster:set_override(0..1), .max_thrust, .current_thrust, .forward
   piston:set_velocity(m/s), .extension, .min, .max
-  hinge:set_velocity(deg/s), hinge:set_target_angle(deg | nil), .angle
+  hinge:set_velocity(deg/s), hinge:set_target_angle(deg | nil), .angle   (-90..90)
+  rotor: same as hinge but spins forever; .angle wraps at -180..180, targets take the short way
   grid.velocity, .angular_velocity, .gravity (grid frame vectors), .altitude, .planet, .mass, .speed
   me:set_frequency(1|10|100), print(...), storage (persistent string)
   function tick(dt) ... end, function on_message(arg) ... end
@@ -505,6 +506,21 @@ func _select_block(id: int) -> void:
 			row.add_child(cb)
 			row.add_child(sp)
 			panel_detail.add_child(row)
+		"rotor":
+			_slider("Velocity (deg/s)", -180, 180, 1, b["hinge_velocity"], func(v): game.set_hinge_velocity(id, v))
+			var rrow := HBoxContainer.new()
+			var rcb := CheckBox.new()
+			rcb.text = "Hold target angle"
+			rcb.button_pressed = b["hinge_target_enabled"]
+			var rsp := SpinBox.new()
+			rsp.min_value = -180
+			rsp.max_value = 180
+			rsp.value = b["hinge_target"]
+			rcb.toggled.connect(func(on): game.set_hinge_target(id, on, rsp.value))
+			rsp.value_changed.connect(func(v): if rcb.button_pressed: game.set_hinge_target(id, true, v))
+			rrow.add_child(rcb)
+			rrow.add_child(rsp)
+			panel_detail.add_child(rrow)
 		"programmable":
 			_button("Edit script", func(): open_editor(id))
 			var row := HBoxContainer.new()
@@ -561,6 +577,8 @@ func _update_value_label() -> void:
 			panel_value_label.text = "Extension: %.2f m (0 - 5)" % b["value"]
 		"hinge":
 			panel_value_label.text = "Angle: %.1f deg (-90 - 90)" % b["value"]
+		"rotor":
+			panel_value_label.text = "Angle: %.1f deg (unlimited)" % b["value"]
 		_:
 			panel_value_label.text = ""
 

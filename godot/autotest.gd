@@ -60,6 +60,14 @@ func _run() -> void:
 		game.debug_set_look(v[0], v[1])
 		await _wait(0.6)
 		await _shot(v[2])
+	# Carousel at full spin (~10 s after start) and the slewing crane.
+	await _wait(3.0)
+	game.debug_set_look(62.0, 12.0)
+	await _wait(0.5)
+	await _shot("02e_carousel")
+	game.debug_set_look(-35.0, 18.0)
+	await _wait(0.3)
+	await _shot("02f_crane")
 
 	# Build: new grid in front, then a block on it.
 	var before: int = game.debug_counts()["grids"]

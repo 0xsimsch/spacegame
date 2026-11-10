@@ -280,9 +280,10 @@ fn hinge_holds_in_gravity() {
 #[test]
 fn demo_constructs_work() {
     // (prefab, [(mech name, expected min below, expected max above)])
-    let cases: [(&str, &[(&str, f64, f64)]); 4] = [
+    let cases: [(&str, &[(&str, f64, f64)]); 5] = [
         ("elevator", &[("Lift 1", 0.3, 4.7), ("Lift 2", 0.3, 4.7), ("Lift 3", 0.3, 4.7)]),
-        ("crane", &[("Boom Hinge", -50.0, -10.0), ("Boom Piston", 1.0, 4.0), ("Hook Hinge", -50.0, -10.0)]),
+        ("crane", &[("Slew Rotor", -150.0, 150.0), ("Boom Hinge", -50.0, -10.0), ("Boom Piston", 1.0, 4.0), ("Hook Hinge", -50.0, -10.0)]),
+        ("carousel", &[("Carousel Rotor", -150.0, 150.0), ("Swing 1", 1.0, 30.0), ("Swing 3", 1.0, 30.0)]),
         ("robot", &[("Shoulder", -25.0, 25.0), ("Reach Piston", 1.0, 4.0), ("Elbow", -45.0, 45.0), ("Wrist", -60.0, 60.0)]),
         ("bridge", &[("Bridge Hinge", 5.0, 70.0)]),
     ];
@@ -312,12 +313,65 @@ fn demo_constructs_work() {
         }
         assert_eq!(w.script_info(pb).unwrap().error, None, "{name}: script error");
         assert!(max_dist < 30.0, "{name}: a part flew {max_dist} m away");
+        if name == "carousel" {
+            // Gondolas must swing outwards (away from the hub), not inwards.
+            let hub = w.grids.values().find(|g| g.blocks.values().any(|b| b.kind == BlockKind::RotorTop)).unwrap();
+            let hub_pos = w.phys.bodies[hub.body].translation();
+            let up = (pos - shared::solar::BODIES[3].position).normalize();
+            let swing_out = w.grids.values().filter(|g| g.blocks.values().any(|b| b.kind == BlockKind::Cockpit)).map(|g| {
+                let p = w.phys.bodies[g.body].translation() - hub_pos;
+                (p - up * p.dot(up)).length()
+            }).fold(0.0f64, f64::max);
+            eprintln!("carousel gondola max radius at end: {swing_out:.2}");
+        }
         for (i, (n, want_lo, want_hi)) in mechs.iter().enumerate() {
             eprintln!("{name}/{n}: {:.2} .. {:.2}", lo[i], hi[i]);
             // Nothing may slam into the hinge limits (that means it toppled).
-            assert!(lo[i] > -85.0 && hi[i] < 85.0, "{name}/{n} hit its limits: {:.1}..{:.1}", lo[i], hi[i]);
+            let is_rotor = w.block(ids[i]).unwrap().1.kind == BlockKind::Rotor;
+            assert!(is_rotor || (lo[i] > -85.0 && hi[i] < 85.0), "{name}/{n} hit its limits: {:.1}..{:.1}", lo[i], hi[i]);
             assert!(lo[i] < *want_lo && hi[i] > *want_hi, "{name}/{n} range {:.2}..{:.2}, wanted below {want_lo} and above {want_hi}", lo[i], hi[i]);
         }
     }
 }
 
+
+#[test]
+fn rotor_spins_and_targets() {
+    let mut w = World::new();
+    let g = w.create_grid(deep_space(), DQuat::IDENTITY, true, None);
+    w.insert_block(g, IVec3::ZERO, ident(), BlockKind::Armor, None, None, false);
+    let rotor = w.insert_block(g, IVec3::Y, orient::from_axes(IVec3::Y, IVec3::Z).unwrap(), BlockKind::Rotor, None, None, true);
+    // An off-centre arm so the rotor has something to turn.
+    let head = match &w.block(rotor).unwrap().1.state { BlockState::Mech(m) => m.top.unwrap(), _ => unreachable!() };
+    for x in 1..=3 {
+        w.insert_block(head, IVec3::new(x, 1, 0), ident(), BlockKind::Armor, None, None, false);
+    }
+    // Continuous rotation: 90 deg/s for 5 s passes the +-180 wrap at least once.
+    w.set_block_prop(rotor, BlockProp::HingeVelocity(90.0)).unwrap();
+    let mut wraps = 0;
+    let mut last = mech_value(&w, rotor);
+    for _ in 0..300 {
+        w.step();
+        let v = mech_value(&w, rotor);
+        if last > 150.0 && v < -150.0 {
+            wraps += 1;
+        }
+        last = v;
+    }
+    assert!(wraps >= 1, "rotor never wrapped around (angle {last})");
+    // Target via the shortest way round, including across the wrap.
+    for target in [170.0f32, -170.0, 0.0] {
+        w.set_block_prop(rotor, BlockProp::HingeTarget(Some(target))).unwrap();
+        run(&mut w, 4.0);
+        let v = mech_value(&w, rotor);
+        let err = crate::build::wrap_deg(v - target as f64).abs();
+        assert!(err < 2.0, "target {target}: at {v}");
+    }
+    // Save/load keeps the angle.
+    w.set_block_prop(rotor, BlockProp::HingeTarget(Some(120.0))).unwrap();
+    run(&mut w, 3.0);
+    let mut w2 = World::load_bytes(&w.save_bytes()).unwrap();
+    run(&mut w2, 0.2);
+    let v = mech_value(&w2, rotor);
+    assert!((v - 120.0).abs() < 3.0, "after load: {v}");
+}

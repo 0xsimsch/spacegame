@@ -51,9 +51,9 @@ pub enum JointRef {
 pub struct Mech {
     pub top: Option<GridId>,
     pub joint: Option<JointRef>,
-    /// Piston: m/s. Hinge: deg/s.
+    /// Piston: m/s. Hinge/rotor: deg/s.
     pub velocity: f64,
-    /// Hinge only: target angle in degrees (overrides `velocity`).
+    /// Hinge/rotor only: target angle in degrees (overrides `velocity`).
     pub target: Option<f64>,
     /// Piston extension (m) or hinge angle (deg), read back after each step.
     pub value: f64,

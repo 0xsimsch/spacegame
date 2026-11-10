@@ -14,14 +14,19 @@ pub enum BlockKind {
     HingeTop,
     Programmable,
     Cockpit,
+    /// Spins without limit around its forward axis.
+    Rotor,
+    /// Created automatically on top of a rotor (its own sub-grid).
+    RotorTop,
 }
 
 /// Blocks the player can pick in build mode, in hot-bar order.
-pub const BUILDABLE: [BlockKind; 6] = [
+pub const BUILDABLE: [BlockKind; 7] = [
     BlockKind::Armor,
     BlockKind::Thruster,
     BlockKind::Piston,
     BlockKind::Hinge,
+    BlockKind::Rotor,
     BlockKind::Programmable,
     BlockKind::Cockpit,
 ];
@@ -37,8 +42,21 @@ pub const PISTON_MAX_FORCE: f64 = 200_000.0;
 pub const HINGE_LIMIT_DEG: f64 = 90.0;
 pub const HINGE_MAX_SPEED_DEG: f64 = 90.0;
 pub const HINGE_MAX_TORQUE: f64 = 1_500_000.0;
+/// Rotor speed limit in degrees per second (no angle limits).
+pub const ROTOR_MAX_SPEED_DEG: f64 = 180.0;
+pub const ROTOR_MAX_TORQUE: f64 = 1_500_000.0;
 
 impl BlockKind {
+    /// Pistons, hinges and rotors: blocks that carry a head sub-grid on a joint.
+    pub fn is_mech(self) -> bool {
+        matches!(self, BlockKind::Piston | BlockKind::Hinge | BlockKind::Rotor)
+    }
+
+    /// Joints measured in degrees (hinges and rotors).
+    pub fn is_angular(self) -> bool {
+        matches!(self, BlockKind::Hinge | BlockKind::Rotor)
+    }
+
     pub fn mass(self) -> f64 {
         match self {
             BlockKind::Armor => 100.0,
@@ -49,6 +67,8 @@ impl BlockKind {
             BlockKind::HingeTop => 150.0,
             BlockKind::Programmable => 150.0,
             BlockKind::Cockpit => 150.0,
+            BlockKind::Rotor => 250.0,
+            BlockKind::RotorTop => 150.0,
         }
     }
 
@@ -62,6 +82,8 @@ impl BlockKind {
             BlockKind::HingeTop => "Hinge Head",
             BlockKind::Programmable => "Programmable Block",
             BlockKind::Cockpit => "Cockpit",
+            BlockKind::Rotor => "Rotor",
+            BlockKind::RotorTop => "Rotor Head",
         }
     }
 
@@ -76,12 +98,14 @@ impl BlockKind {
             BlockKind::HingeTop => "hinge_top",
             BlockKind::Programmable => "programmable",
             BlockKind::Cockpit => "cockpit",
+            BlockKind::Rotor => "rotor",
+            BlockKind::RotorTop => "rotor_top",
         }
     }
 
     /// Whether the block shows up in the control panel (has something to configure).
     pub fn is_terminal(self) -> bool {
-        !matches!(self, BlockKind::Armor | BlockKind::PistonTop | BlockKind::HingeTop)
+        !matches!(self, BlockKind::Armor | BlockKind::PistonTop | BlockKind::HingeTop | BlockKind::RotorTop)
     }
 
     pub fn buildable(self) -> bool {
@@ -97,6 +121,7 @@ impl BlockKind {
             BlockKind::Hinge | BlockKind::HingeTop => [0.2, 0.55, 0.85],
             BlockKind::Programmable => [0.2, 0.7, 0.35],
             BlockKind::Cockpit => [0.75, 0.75, 0.8],
+            BlockKind::Rotor | BlockKind::RotorTop => [0.65, 0.3, 0.75],
         }
     }
 }

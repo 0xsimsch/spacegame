@@ -541,7 +541,7 @@ impl GameServer {
                     client,
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
-                     /spawn <ship|arm|pad|elevator|crane|robot|bridge> [hover|velocity] - spawn a prefab in front of you\n\
+                     /spawn <ship|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
                      /save - save the world\n/where - show your position",
                 );
                 Ok(())
@@ -623,6 +623,7 @@ fn seed_world(world: &mut World) {
     world.spawn_prefab("crane", spawn + rot * DVec3::new(-16.0, 0.6, -32.0), rot, None);
     world.spawn_prefab("robot", spawn + rot * DVec3::new(14.0, 0.6, -28.0), rot, None);
     world.spawn_prefab("bridge", spawn + rot * DVec3::new(0.0, 0.6, -42.0), rot, None);
+    world.spawn_prefab("carousel", spawn + rot * DVec3::new(32.0, 0.6, -14.0), rot, None);
 }
 
 /// 20 hovering ships + 30 sweeping arms = 50 scripts, all near the Earth spawn.

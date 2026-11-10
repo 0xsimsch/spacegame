@@ -240,7 +240,7 @@ impl INode3D for SpaceGame {
                 Key::T => self.build_rot = orient::cycle_up(self.build_rot),
                 Key::F => self.interact(),
                 Key::K => self.open_panel_for_target(),
-                k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6) => {
+                k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6 | Key::KEY_7) => {
                     self.build_kind = (k.ord() - Key::KEY_1.ord()) as usize;
                     self.build_mode = true;
                 }
@@ -601,12 +601,17 @@ impl SpaceGame {
                     let s = add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.5), Vector3::new(0.3, 1.0, 0.3), Some(along_z));
                     node.shaft = Some(s);
                 }
-                BlockKind::PistonTop | BlockKind::HingeTop => {
+                BlockKind::PistonTop | BlockKind::HingeTop | BlockKind::RotorTop => {
                     add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, -0.3), Vector3::new(1.0, 1.0, 0.4), None);
                 }
                 BlockKind::Hinge => {
                     add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, 0.15), Vector3::new(1.0, 1.0, 0.7), None);
                     add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.4), Vector3::new(0.5, 1.0, 0.5), Some(along_x));
+                }
+                BlockKind::Rotor => {
+                    // Base plus a turntable disc on the forward (-Z) face.
+                    add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, 0.1), Vector3::new(1.0, 1.0, 0.8), None);
+                    add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.4), Vector3::new(0.85, 0.2, 0.85), Some(along_z));
                 }
                 BlockKind::Programmable => {
                     add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::ONE, None);
@@ -847,7 +852,7 @@ impl SpaceGame {
             .st
             .grids
             .values()
-            .filter(|g| g.blocks.values().any(|b| matches!(b.kind, BlockKind::PistonTop | BlockKind::HingeTop)))
+            .filter(|g| g.blocks.values().any(|b| matches!(b.kind, BlockKind::PistonTop | BlockKind::HingeTop | BlockKind::RotorTop)))
             .map(|g| g.id)
             .collect();
         let mut changed = true;
@@ -861,7 +866,7 @@ impl SpaceGame {
                 let connected = ids.iter().any(|g| {
                     let Some(gp) = self.st.grid_pose(*g) else { return false };
                     self.st.grids[g].blocks.values().any(|b| {
-                        matches!(b.kind, BlockKind::Piston | BlockKind::Hinge) && (gp.transform(b.cell.as_dvec3()) - hp.pos).length() < 7.0
+                        b.kind.is_mech() && (gp.transform(b.cell.as_dvec3()) - hp.pos).length() < 7.0
                     })
                 });
                 if connected {
@@ -974,7 +979,7 @@ impl SpaceGame {
             let kind = BUILDABLE[self.build_kind];
             let f = orient::forward(self.build_rot);
             s += &format!(
-                "BUILD: {} (1-6 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
+                "BUILD: {} (1-7 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
                 kind.display_name(),
                 f,
                 if self.build_static { "STATION (static)" } else { "SHIP (dynamic)" }

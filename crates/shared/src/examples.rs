@@ -81,15 +81,18 @@ end
 "#;
 
 /// A luffing crane whose hook hinge counter-rotates to hang straight down.
-pub const CRANE: &str = r#"-- Crane: raise/lower the boom, telescope it, and keep the hook hanging straight down.
+pub const CRANE: &str = r#"-- Crane: slew around, raise/lower the boom, telescope it, keep the hook hanging straight down.
+local slew = grid:block("Slew Rotor")
 local luff = grid:block("Boom Hinge")
 local boom = grid:block("Boom Piston")
 local hook = grid:block("Hook Hinge")
-assert(luff and boom and hook, "needs 'Boom Hinge', 'Boom Piston' and 'Hook Hinge'")
+assert(slew and luff and boom and hook, "needs 'Slew Rotor', 'Boom Hinge', 'Boom Piston' and 'Hook Hinge'")
 local t = 0
 
 function tick(dt)
   t += dt
+  -- Slowly turn the whole tower (the rotor has no angle limits).
+  slew:set_velocity(10)
   -- Negative angles lift the boom (right-hand rule around the hinge axis).
   luff:set_target_angle(-30 - 25 * math.sin(t * 0.25))
   local want = 2.5 + 2.4 * math.sin(t * 0.18)
@@ -100,7 +103,7 @@ function tick(dt)
 end
 
 function on_message(arg)
-  print(string.format("boom %.1f deg, %.2f m out, hook %.1f deg", luff.angle, boom.extension, hook.angle))
+  print(string.format("slew %.0f deg, boom %.1f deg, %.2f m out, hook %.1f deg", slew.angle, luff.angle, boom.extension, hook.angle))
 end
 "#;
 
@@ -150,6 +153,37 @@ function tick(dt)
     open = not open
   end
   hinge:set_target_angle(if open then 75 else 0)
+end
+"#;
+
+/// A carousel: the rotor spins up and down, gondolas swing out like a real chair-o-plane.
+pub const CAROUSEL: &str = r#"-- Carousel: spin up, slow down, reverse. Gondolas swing out by the angle a real
+-- swing ride would reach: tan(angle) = w^2 * r / g. Run with a number = top speed (deg/s).
+local rotor = grid:block("Carousel Rotor")
+local swings = {}
+for i = 1, 4 do
+  swings[i] = grid:block("Swing " .. i)
+  assert(swings[i], "needs hinges 'Swing 1'..'Swing 4'")
+end
+assert(rotor, "needs a rotor named 'Carousel Rotor'")
+local top_speed = 90
+local t = 0
+
+function tick(dt)
+  t += dt
+  local speed = top_speed * math.sin(t * 0.15)
+  rotor:set_velocity(speed)
+  local w = math.rad(rotor.velocity)
+  local radius = 5
+  local angle = math.deg(math.atan(w * w * radius / 9.81))
+  for _, s in swings do
+    s:set_target_angle(math.min(angle, 75))
+  end
+end
+
+function on_message(arg)
+  top_speed = math.clamp(tonumber(arg) or top_speed, 0, 180)
+  print("top speed", top_speed, "deg/s; rotor at", rotor.angle, "deg")
 end
 "#;
 
@@ -237,6 +271,7 @@ pub fn all() -> Vec<(&'static str, String)> {
         ("Crane", CRANE.to_string()),
         ("Robot arm", ROBOT.to_string()),
         ("Drawbridge", BRIDGE.to_string()),
+        ("Carousel", CAROUSEL.to_string()),
         ("Velocity hold", velocity_hold()),
         ("Hover", hover()),
     ]

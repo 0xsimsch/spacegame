@@ -21,7 +21,7 @@ cargo run --release -p server --bin bot -- --addr 127.0.0.1:47800 --count 4 --se
 Client command-line options (after `--`): `--host`, `--join HOST:PORT`, `--name N`,
 `--port P`, `--autotest [--shots DIR] [--expect-players N]`.
 
-Tests: `cargo test --workspace` (23 tests, including the three acceptance scripts) and
+Tests: `cargo test --workspace` (24 tests, including the three acceptance scripts) and
 `godot --headless --path godot -- --autotest --host --port 47891` (end-to-end client smoke test).
 
 ## Controls
@@ -30,10 +30,10 @@ Tests: `cargo test --workspace` (23 tests, including the three acceptance script
 |---|---|
 | WASD / Space / C | move (jetpack), Q/E roll in zero-g |
 | J / Z / X | jetpack, inertial dampeners, cruise (speed cap 150 → 5000 m/s) |
-| G | build mode: 1-6 / wheel pick block, R/T rotate, B ship/station, LMB place, RMB remove |
+| G | build mode: 1-7 / wheel pick block (7 = rotor), R/T rotate, B ship/station, LMB place, RMB remove |
 | F | sit in cockpit / edit programmable block / control panel of a block; F again to stand up |
 | K | control panel of the grid you look at or sit in |
-| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <arm\|elevator\|crane\|robot\|bridge>`, `/save`, `/where` |
+| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
 | F1 / F3 / Esc | help, stats overlay, menu |
 
 ## Demo park
@@ -45,8 +45,9 @@ driven by its own programmable block; open it with F to read or change the scrip
 |---|---|---|
 | Arm | piston → hinge → arm | sweeps in/out and ±60° |
 | Elevator | 3 stacked pistons carrying a platform (15 m) | extends them one after another, pauses, retracts. Run with a number to set the speed |
-| Crane | tower → luffing hinge → boom → telescoping piston → hook hinge | raises the boom and telescopes it; the hook counter-rotates to hang straight down |
+| Crane | slew rotor → tower → luffing hinge → boom → telescoping piston → hook hinge | turns the tower, raises the boom and telescopes it; the hook counter-rotates to hang straight down |
 | Robot arm | shoulder hinge → piston → elbow hinge (other axis) → wrist hinge → gripper | phase-shifted sine "dance". Run with a number to set the speed |
+| Carousel | rotor → hub with 4 arms → swing hinges → gondolas with seats | spins up, slows, reverses; gondolas swing out by atan(ω²r/g). Sit in one with F |
 | Drawbridge | wall → hinge → 3×6 deck | opens/closes every 8 s. Run with `open`, `close` or `auto` |
 
 Mechanical joints are Rapier multibody (reduced-coordinate) joints, so long chains stay stiff.
@@ -67,7 +68,8 @@ function on_message(arg) end               -- "Run" button / argument
 
 Blocks: `thruster:set_override(0..1)`, `.max_thrust`, `.current_thrust`, `.forward`;
 `piston:set_velocity`, `.extension`, `.min`, `.max`; `hinge:set_velocity`,
-`hinge:set_target_angle(deg|nil)`, `.angle`. Grid: `velocity`, `world_velocity`,
+`hinge:set_target_angle(deg|nil)`, `.angle`; `rotor`: same as a hinge, but it spins without
+limits around its forward axis, `.angle` wraps at ±180 and targets take the shortest way round. Grid: `velocity`, `world_velocity`,
 `angular_velocity`, `gravity`, `altitude`, `planet`, `mass`, `speed`, `position`,
 `grid:set_cruise(bool)`. Also `print`, `storage` (persisted string), `vector.*`.
 Limits per run: 50k interrupts / 5 ms, 4 MB memory; a failing run applies no commands.

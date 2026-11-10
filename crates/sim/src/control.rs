@@ -87,7 +87,8 @@ impl World {
 
         for (gid, _cell, rot, inp) in piloted {
             let g = &self.grids[&gid];
-            if g.is_static {
+            // Static grids and joint-driven sub-grids (e.g. a gondola) aren't flown.
+            if g.is_static || g.mount.is_some() {
                 continue;
             }
             let body = &self.phys.bodies[g.body];
@@ -182,6 +183,13 @@ impl World {
                     let Some(j) = m.joint else { continue };
                     let (axis, vel) = if b.kind == BlockKind::Piston {
                         (JointAxis::LinX, m.velocity)
+                    } else if b.kind == BlockKind::Rotor {
+                        // Shortest way round to the target angle.
+                        let v = match m.target {
+                            Some(t) => (crate::build::wrap_deg(t - m.value) * 3.0).clamp(-ROTOR_MAX_SPEED_DEG, ROTOR_MAX_SPEED_DEG),
+                            None => m.velocity,
+                        };
+                        (JointAxis::AngX, v.to_radians())
                     } else {
                         let v = match m.target {
                             Some(t) => ((t - m.value) * 3.0).clamp(-HINGE_MAX_SPEED_DEG, HINGE_MAX_SPEED_DEG),
@@ -241,7 +249,8 @@ impl World {
                         (local - (b.cell.as_dvec3() + fwd)).dot(fwd)
                     } else {
                         let rel = p1.rotation.inverse() * p2.rotation;
-                        twist_angle(rel, orient::right(b.rot).as_dvec3()).to_degrees()
+                        let axis = if b.kind == BlockKind::Rotor { fwd } else { orient::right(b.rot).as_dvec3() };
+                        twist_angle(rel, axis).to_degrees()
                     };
                     vals.push((g.id, b.cell, v));
                 }

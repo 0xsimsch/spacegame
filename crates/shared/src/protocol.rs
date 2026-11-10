@@ -27,8 +27,9 @@ pub struct PlayerInput {
 pub enum BlockProp {
     ThrusterOverride(f32),
     PistonVelocity(f32),
+    /// Hinge or rotor speed in deg/s.
     HingeVelocity(f32),
-    /// `None` switches the hinge back to velocity mode.
+    /// Hinge or rotor target angle; `None` switches back to velocity mode.
     HingeTarget(Option<f32>),
     ScriptFrequency(u32),
 }

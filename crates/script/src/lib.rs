@@ -139,12 +139,15 @@ impl UserData for BlockRef {
             let kind = with_block(lua, this.0, |b| b.kind)?;
             match kind {
                 BlockKind::Piston => push(lua, Command::PistonVelocity(this.0, v)),
-                BlockKind::Hinge => push(lua, Command::HingeVelocity(this.0, v)),
+                BlockKind::Hinge | BlockKind::Rotor => push(lua, Command::HingeVelocity(this.0, v)),
                 k => Err(mlua::Error::runtime(format!("set_velocity called on a {} block", k.api_name()))),
             }
         });
         m.add_method("set_target_angle", |lua, this, v: Option<f64>| {
-            kind_check(lua, this.0, BlockKind::Hinge, "set_target_angle")?;
+            let k = with_block(lua, this.0, |b| b.kind)?;
+            if !k.is_angular() {
+                return Err(mlua::Error::runtime(format!("set_target_angle called on a {} block", k.api_name())));
+            }
             push(lua, Command::HingeTarget(this.0, v))
         });
         m.add_meta_method(MetaMethod::ToString, |lua, this, ()| {
@@ -165,18 +168,22 @@ impl UserData for BlockRef {
                     "override" => Value::Number(b.thrust_override),
                     "current_thrust" => Value::Number(b.thrust_current),
                     "position_m" | "extension" => Value::Number(b.piston_position),
-                    "min" => Value::Number(if b.kind == BlockKind::Hinge {
+                    "min" => Value::Number(if b.kind == BlockKind::Rotor {
+                        -180.0
+                    } else if b.kind == BlockKind::Hinge {
                         -shared::blocks::HINGE_LIMIT_DEG
                     } else {
                         shared::blocks::PISTON_MIN
                     }),
-                    "max" => Value::Number(if b.kind == BlockKind::Hinge {
+                    "max" => Value::Number(if b.kind == BlockKind::Rotor {
+                        180.0
+                    } else if b.kind == BlockKind::Hinge {
                         shared::blocks::HINGE_LIMIT_DEG
                     } else {
                         shared::blocks::PISTON_MAX
                     }),
                     "velocity" => Value::Number(match b.kind {
-                        BlockKind::Hinge => b.hinge_velocity,
+                        BlockKind::Hinge | BlockKind::Rotor => b.hinge_velocity,
                         _ => b.piston_velocity,
                     }),
                     "angle" => Value::Number(b.hinge_angle),

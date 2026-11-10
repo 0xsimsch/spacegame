@@ -59,7 +59,7 @@ impl World {
         let collider = self.phys.insert_collider(col, Some(g.body));
         let state = match kind {
             BlockKind::Thruster => BlockState::Thruster(Thruster { override_: 0.0, demand: 0.0, output: 0.0 }),
-            BlockKind::Piston | BlockKind::Hinge => BlockState::Mech(Mech {
+            k if k.is_mech() => BlockState::Mech(Mech {
                 top: None,
                 joint: None,
                 velocity: 0.0,
@@ -87,7 +87,7 @@ impl World {
         self.grids.get_mut(&grid).unwrap().blocks.insert(cell, block);
         self.block_loc.insert(id, (grid, cell));
         self.events.push(WorldEvent::BlockAdded { grid, block: data });
-        if with_head && matches!(kind, BlockKind::Piston | BlockKind::Hinge) {
+        if with_head && kind.is_mech() {
             self.create_head(id);
         }
         id
@@ -103,7 +103,11 @@ impl World {
         let Some((g, b)) = self.block(mech) else { return };
         let parent_pose = *self.phys.bodies[g.body].position();
         let fwd = orient::forward(b.rot);
-        let head_kind = if b.kind == BlockKind::Piston { BlockKind::PistonTop } else { BlockKind::HingeTop };
+        let head_kind = match b.kind {
+            BlockKind::Piston => BlockKind::PistonTop,
+            BlockKind::Rotor => BlockKind::RotorTop,
+            _ => BlockKind::HingeTop,
+        };
         let rot = b.rot;
         let cell = b.cell;
         let pos = parent_pose.transform_point((cell + fwd).as_dvec3());
@@ -132,6 +136,16 @@ impl World {
                 .limits([PISTON_MIN, PISTON_MAX])
                 .motor_velocity(0.0, 1.0)
                 .motor_max_force(PISTON_MAX_FORCE)
+                .contacts_enabled(false)
+                .build()
+                .into()
+        } else if b.kind == BlockKind::Rotor {
+            // Spins around its forward axis, no limits.
+            RevoluteJointBuilder::new(fwd)
+                .local_anchor1(anchor1)
+                .local_anchor2(anchor2)
+                .motor_velocity(0.0, 1.0)
+                .motor_max_force(ROTOR_MAX_TORQUE)
                 .contacts_enabled(false)
                 .build()
                 .into()
@@ -255,7 +269,7 @@ impl World {
         if !neighbour {
             return Err("blocks must touch the grid".into());
         }
-        if matches!(kind, BlockKind::Piston | BlockKind::Hinge) {
+        if kind.is_mech() {
             // The head would overlap a block.
             if g.blocks.contains_key(&(cell + orient::forward(rot))) {
                 return Err("no room for the head".into());
@@ -306,12 +320,16 @@ impl World {
             (BlockState::Mech(m), BlockProp::PistonVelocity(v)) if b.kind == BlockKind::Piston => {
                 m.velocity = (v as f64).clamp(-PISTON_MAX_SPEED, PISTON_MAX_SPEED)
             }
-            (BlockState::Mech(m), BlockProp::HingeVelocity(v)) if b.kind == BlockKind::Hinge => {
-                m.velocity = (v as f64).clamp(-HINGE_MAX_SPEED_DEG, HINGE_MAX_SPEED_DEG);
+            (BlockState::Mech(m), BlockProp::HingeVelocity(v)) if b.kind.is_angular() => {
+                let max = if b.kind == BlockKind::Rotor { ROTOR_MAX_SPEED_DEG } else { HINGE_MAX_SPEED_DEG };
+                m.velocity = (v as f64).clamp(-max, max);
                 m.target = None;
             }
             (BlockState::Mech(m), BlockProp::HingeTarget(t)) if b.kind == BlockKind::Hinge => {
                 m.target = t.map(|t| (t as f64).clamp(-HINGE_LIMIT_DEG, HINGE_LIMIT_DEG))
+            }
+            (BlockState::Mech(m), BlockProp::HingeTarget(t)) if b.kind == BlockKind::Rotor => {
+                m.target = t.map(|t| wrap_deg(t as f64))
             }
             (BlockState::Program(p), BlockProp::ScriptFrequency(f)) if [1, 10, 100].contains(&f) => p.frequency = f,
             _ => return Err("property does not apply to this block".into()),
@@ -397,4 +415,15 @@ impl World {
         }
         self.update_seated_players();
     }
+}
+
+/// Wrap an angle in degrees to (-180, 180].
+pub fn wrap_deg(a: f64) -> f64 {
+    let mut a = a % 360.0;
+    if a > 180.0 {
+        a -= 360.0;
+    } else if a <= -180.0 {
+        a += 360.0;
+    }
+    a
 }

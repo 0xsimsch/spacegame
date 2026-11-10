@@ -5,7 +5,7 @@ use shared::BlockId;
 use shared::examples;
 use shared::orient::from_axes;
 
-pub const NAMES: [&str; 7] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge"];
+pub const NAMES: [&str; 8] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel"];
 
 fn rot(fwd: IVec3, up: IVec3) -> u8 {
     from_axes(fwd, up).expect("valid axes")
@@ -23,6 +23,7 @@ impl World {
             "crane" => Some(self.spawn_crane(pos, orientation)),
             "robot" => Some(self.spawn_robot(pos, orientation)),
             "bridge" => Some(self.spawn_bridge(pos, orientation)),
+            "carousel" => Some(self.spawn_carousel(pos, orientation)),
             _ => None,
         }
     }
@@ -135,8 +136,10 @@ impl World {
     /// A tower with a luffing, telescoping boom and a self-levelling hook.
     fn spawn_crane(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
         let g = self.base_with_controller(pos, orientation, 1, "Crane Controller", examples::CRANE);
-        self.armor(g, (1..=4).map(|y| IVec3::new(0, y, 0)));
-        let (_, boom) = self.mech(g, IVec3::new(0, 5, 0), IVec3::Y, IVec3::Z, BlockKind::Hinge, "Boom Hinge");
+        // The whole tower turns on a rotor.
+        let (_, tower) = self.mech(g, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Rotor, "Slew Rotor");
+        self.armor(tower, (1..=3).map(|y| IVec3::new(0, y, 0)));
+        let (_, boom) = self.mech(tower, IVec3::new(0, 4, 0), IVec3::Y, IVec3::Z, BlockKind::Hinge, "Boom Hinge");
         // Boom along +Z from the hinge head, then a telescoping section.
         self.armor(boom, [IVec3::new(0, 0, 1), IVec3::new(0, 0, 2)]);
         let (_, tele) = self.mech(boom, IVec3::new(0, 0, 3), IVec3::Z, IVec3::Y, BlockKind::Piston, "Boom Piston");
@@ -171,6 +174,27 @@ impl World {
         let (_, plate) = self.mech(g, IVec3::new(0, 3, 0), IVec3::Z, IVec3::Y, BlockKind::Hinge, "Bridge Hinge");
         self.armor(plate, (-1..=1).flat_map(|x| (0..6).map(move |z| IVec3::new(x, 0, z))).filter(|c| *c != IVec3::ZERO));
         self.finish_controller(g, examples::BRIDGE);
+        g
+    }
+
+    /// A rotor-driven carousel with four swinging gondolas (each with a seat).
+    fn spawn_carousel(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.base_with_controller(pos, orientation, 2, "Carousel Controller", examples::CAROUSEL);
+        let (_, hub) = self.mech(g, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Rotor, "Carousel Rotor");
+        self.armor(hub, (1..=4).map(|y| IVec3::new(0, y, 0)));
+        let dirs = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z];
+        for d in dirs {
+            self.armor(hub, (1..=4).map(|r| d * r + IVec3::new(0, 4, 0)));
+        }
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        for (i, d) in dirs.into_iter().enumerate() {
+            // Hinge under each arm tip; with up = radial direction its axis is
+            // tangential, so positive angles swing the gondola outwards.
+            let (_, gondola) = self.mech(hub, d * 4 + IVec3::new(0, 3, 0), IVec3::NEG_Y, d, BlockKind::Hinge, &format!("Swing {}", i + 1));
+            self.armor(gondola, [IVec3::new(0, -1, 0)]);
+            self.insert_block(gondola, IVec3::new(0, -2, 0), ident, BlockKind::Cockpit, None, Some(format!("Gondola Seat {}", i + 1)), false);
+        }
+        self.finish_controller(g, examples::CAROUSEL);
         g
     }
 
