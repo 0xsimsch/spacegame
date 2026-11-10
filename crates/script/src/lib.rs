@@ -43,6 +43,8 @@ pub struct BlockInfo {
     pub hinge_velocity: f64,
     pub hinge_target: Option<f64>,
     pub free: bool,
+    pub gyro_override: Option<DVec3>,
+    pub door_open: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -82,6 +84,8 @@ pub enum Command {
     SetFrequency(u32),
     SetCruise(bool),
     SetFree(BlockId, bool),
+    GyroOverride(BlockId, Option<DVec3>),
+    DoorOpen(BlockId, bool),
 }
 
 #[derive(Debug, Default)]
@@ -133,9 +137,18 @@ fn kind_check(lua: &Lua, id: BlockId, want: BlockKind, what: &str) -> mlua::Resu
 
 impl UserData for BlockRef {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
-        m.add_method("set_override", |lua, this, v: f64| {
-            kind_check(lua, this.0, BlockKind::Thruster, "set_override")?;
-            push(lua, Command::ThrusterOverride(this.0, v.clamp(0.0, 1.0)))
+        m.add_method("set_override", |lua, this, v: Value| {
+            match (with_block(lua, this.0, |b| b.kind)?, v) {
+                (BlockKind::Thruster, Value::Number(n)) => push(lua, Command::ThrusterOverride(this.0, n.clamp(0.0, 1.0))),
+                (BlockKind::Thruster, Value::Integer(n)) => push(lua, Command::ThrusterOverride(this.0, (n as f64).clamp(0.0, 1.0))),
+                (BlockKind::Gyro, Value::Vector(w)) => {
+                    push(lua, Command::GyroOverride(this.0, Some(DVec3::new(w.x() as f64, w.y() as f64, w.z() as f64))))
+                }
+                (BlockKind::Gyro, Value::Nil) => push(lua, Command::GyroOverride(this.0, None)),
+                (BlockKind::Thruster, _) => Err(mlua::Error::runtime("thruster:set_override expects a number 0..1")),
+                (BlockKind::Gyro, _) => Err(mlua::Error::runtime("gyro:set_override expects a vector (deg/s) or nil")),
+                (k, _) => Err(mlua::Error::runtime(format!("set_override called on a {} block", k.api_name()))),
+            }
         });
         m.add_method("set_velocity", |lua, this, v: f64| {
             let kind = with_block(lua, this.0, |b| b.kind)?;
@@ -151,6 +164,23 @@ impl UserData for BlockRef {
                 return Err(mlua::Error::runtime(format!("set_free called on a {} block", k.api_name())));
             }
             push(lua, Command::SetFree(this.0, on))
+        });
+        m.add_method("set_open", |lua, this, on: bool| {
+            kind_check(lua, this.0, BlockKind::Door, "set_open")?;
+            push(lua, Command::DoorOpen(this.0, on))
+        });
+        m.add_method("open", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::Door, "open")?;
+            push(lua, Command::DoorOpen(this.0, true))
+        });
+        m.add_method("close", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::Door, "close")?;
+            push(lua, Command::DoorOpen(this.0, false))
+        });
+        m.add_method("toggle", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::Door, "toggle")?;
+            let open = with_block(lua, this.0, |b| b.door_open)?;
+            push(lua, Command::DoorOpen(this.0, !open))
         });
         m.add_method("set_target_angle", |lua, this, v: Option<f64>| {
             let k = with_block(lua, this.0, |b| b.kind)?;
@@ -174,7 +204,11 @@ impl UserData for BlockRef {
                     "position" => vec_value(b.position),
                     "same_grid" => Value::Boolean(b.same_grid),
                     "max_thrust" => Value::Number(b.thrust_max),
-                    "override" => Value::Number(b.thrust_override),
+                    "override" => match b.kind {
+                        BlockKind::Gyro => b.gyro_override.map(vec_value).unwrap_or(Value::Nil),
+                        _ => Value::Number(b.thrust_override),
+                    },
+                    "is_open" => Value::Boolean(b.door_open),
                     "current_thrust" => Value::Number(b.thrust_current),
                     "position_m" | "extension" => Value::Number(b.piston_position),
                     "min" => Value::Number(if b.kind == BlockKind::Rotor {
@@ -445,6 +479,8 @@ mod tests {
                     hinge_velocity: 0.0,
                     hinge_target: None,
                     free: false,
+                    gyro_override: None,
+                    door_open: false,
                 },
                 BlockInfo {
                     id: 3,
@@ -463,6 +499,8 @@ mod tests {
                     hinge_velocity: 0.0,
                     hinge_target: None,
                     free: false,
+                    gyro_override: None,
+                    door_open: false,
                 },
             ],
             ..Default::default()

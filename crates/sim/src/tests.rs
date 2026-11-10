@@ -402,3 +402,107 @@ fn free_swings_follow_physics() {
     assert!(avg > 10.0, "gondola should swing outwards, got {avg:.1}");
     assert!((avg - ideal).abs() < 12.0, "free swing {avg:.1} vs textbook {ideal:.1}");
 }
+
+fn tilt_deg(w: &World, g: GridId) -> f64 {
+    let b = &w.phys.bodies[w.grids[&g].body];
+    let up = *b.rotation() * DVec3::Y;
+    let want = -gravity_at(b.translation()).accel.normalize();
+    up.dot(want).clamp(-1.0, 1.0).acos().to_degrees()
+}
+
+/// The shuttle sits on its legs, takes off, hovers level, lands and opens its ramp.
+#[test]
+fn shuttle_autopilot_flight() {
+    let mut w = World::new();
+    let pos = above("Earth", 3.6);
+    let g = w.spawn_prefab("shuttle", pos, prefabs::surface_orientation(pos), None).unwrap();
+    let mass = w.phys.bodies[w.grids[&g].body].mass();
+    let pb = w.grids[&g].blocks.values().find(|b| b.name == "Shuttle Computer").unwrap().id;
+    assert_eq!(w.script_info(pb).unwrap().error, None);
+    run(&mut w, 3.0);
+    let alt0 = gravity_at(w.grid_pose(g).unwrap().translation).altitude;
+    eprintln!("mass {mass:.0} kg, resting altitude {alt0:.2}, tilt {:.1}", tilt_deg(&w, g));
+    assert!(tilt_deg(&w, g) < 3.0, "stands level on its legs");
+
+    w.run_script(pb, "takeoff").unwrap();
+    let mut max_tilt: f64 = 0.0;
+    for _ in 0..(30 * 60) {
+        w.step();
+        max_tilt = max_tilt.max(tilt_deg(&w, g));
+    }
+    let alt = gravity_at(w.grid_pose(g).unwrap().translation).altitude;
+    eprintln!("after takeoff: altitude {alt:.1}, max tilt {max_tilt:.1}");
+    assert!((alt - 40.0).abs() < 2.0, "hovering at 40 m, got {alt:.1}");
+    assert!(max_tilt < 10.0, "stays level during takeoff: {max_tilt:.1}");
+    assert_eq!(w.script_info(pb).unwrap().error, None);
+
+    w.run_script(pb, "land").unwrap();
+    run(&mut w, 45.0);
+    let alt = gravity_at(w.grid_pose(g).unwrap().translation).altitude;
+    let info = w.script_info(pb).unwrap();
+    eprintln!("after landing: altitude {alt:.1}, output {:?}", info.output);
+    assert!(info.output.iter().any(|l| l.contains("landed")), "landed message");
+    assert!(alt < alt0 + 1.5, "back on the ground: {alt:.1}");
+    assert!(tilt_deg(&w, g) < 5.0);
+    let ramp = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == "Ramp Hinge").unwrap().id;
+    run(&mut w, 3.0);
+    assert!(mech_value(&w, ramp) < -20.0, "ramp opened: {}", mech_value(&w, ramp));
+}
+
+#[test]
+fn doors_and_gyro() {
+    let mut w = World::new();
+    let g = w.create_grid(deep_space(), DQuat::IDENTITY, false, None);
+    w.insert_block(g, IVec3::ZERO, ident(), BlockKind::Armor, None, None, false);
+    let gyro = w.insert_block(g, IVec3::X, ident(), BlockKind::Gyro, None, None, false);
+    let door = w.insert_block(g, IVec3::NEG_X, ident(), BlockKind::Door, None, None, false);
+    // Gyro spins the grid at the requested rate (deg/s, grid frame).
+    w.set_block_prop(gyro, BlockProp::GyroOverride(Some([0.0, 30.0, 0.0]))).unwrap();
+    run(&mut w, 2.0);
+    let av = w.phys.bodies[w.grids[&g].body].angvel();
+    assert!((av.y.to_degrees() - 30.0).abs() < 1.0, "gyro rate {av}");
+    // Doors toggle their collider.
+    let col = w.block(door).unwrap().1.collider;
+    assert!(w.phys.colliders[col].is_enabled());
+    w.set_block_prop(door, BlockProp::DoorOpen(true)).unwrap();
+    assert!(!w.phys.colliders[col].is_enabled());
+    // Scripts can drive both, and the state survives save/load.
+    let pb = w.insert_block(g, IVec3::Y, ident(), BlockKind::Programmable, None, None, false);
+    w.upload_script(pb, "local d = grid:block('Door 1')\nd:close()\nprint(d.is_open)\ngrid:block('Gyroscope 1'):set_override(nil)").unwrap();
+    w.step();
+    assert!(w.phys.colliders[col].is_enabled(), "script closed the door");
+    w.upload_script(pb, "").unwrap();
+    w.set_block_prop(door, BlockProp::DoorOpen(true)).unwrap();
+    let w2 = World::load_bytes(&w.save_bytes()).unwrap();
+    let col2 = w2.block(door).unwrap().1.collider;
+    assert!(!w2.phys.colliders[col2].is_enabled(), "open door stays open after load");
+}
+
+/// Grids carrying joints are multibody roots: gyros, speed caps and teleports
+/// must still work on them.
+#[test]
+fn gyro_and_teleport_on_jointed_ship() {
+    let mut w = World::new();
+    let g = w.spawn_prefab("shuttle", deep_space(), DQuat::IDENTITY, None).unwrap();
+    let pb = w.grids[&g].blocks.values().find(|b| b.name == "Shuttle Computer").unwrap().id;
+    w.upload_script(pb, "").unwrap();
+    let gyro = w.grids[&g].blocks.values().find(|b| b.kind == BlockKind::Gyro).unwrap().id;
+    w.set_block_prop(gyro, BlockProp::GyroOverride(Some([20.0, 0.0, 0.0]))).unwrap();
+    run(&mut w, 2.0);
+    let b = &w.phys.bodies[w.grids[&g].body];
+    let local = b.rotation().inverse() * b.angvel();
+    assert!((local.x.to_degrees() - 20.0).abs() < 1.5, "gyro on a multibody root: {:.2}", local * 57.3);
+    w.set_block_prop(gyro, BlockProp::GyroOverride(Some([0.0, 0.0, 0.0]))).unwrap();
+    run(&mut w, 1.0);
+    // Teleport moves every part together.
+    let leg = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == "Leg 1").unwrap().id;
+    let leg_head = match &w.block(leg).unwrap().1.state { BlockState::Mech(m) => m.top.unwrap(), _ => unreachable!() };
+    let before = w.grid_pose(leg_head).unwrap().translation - w.grid_pose(g).unwrap().translation;
+    let dest = above("Moon", 50.0);
+    w.teleport_group(g, dest);
+    w.step();
+    let p = w.grid_pose(g).unwrap().translation;
+    assert!((p - dest).length() < 1.0, "shuttle teleported: off by {}", (p - dest).length());
+    let after = w.grid_pose(leg_head).unwrap().translation - p;
+    assert!((after - before).length() < 0.5, "legs came along");
+}

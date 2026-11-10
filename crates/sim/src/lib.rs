@@ -88,6 +88,9 @@ pub enum BlockState {
     Mech(Mech),
     Program(Box<Program>),
     Cockpit { pilot: Option<PlayerId> },
+    /// Target angular velocity in deg/s (grid frame), if overridden.
+    Gyro { override_: Option<DVec3> },
+    Door { open: bool },
 }
 
 #[derive(Debug)]
@@ -327,6 +330,8 @@ impl World {
             hinge_velocity: 0.0,
             hinge_target: None,
             free: false,
+            gyro_override: None,
+            door_open: false,
         };
         match &b.state {
             BlockState::Thruster(t) => info.thruster_override = t.override_ as f32,
@@ -339,6 +344,8 @@ impl World {
                 info.hinge_target = m.target.map(|t| t as f32);
                 info.free = m.free;
             }
+            BlockState::Gyro { override_ } => info.gyro_override = override_.map(|v| v.as_vec3().to_array()),
+            BlockState::Door { open } => info.door_open = *open,
             _ => {}
         }
         Some(info)
@@ -418,13 +425,16 @@ impl World {
 
     fn post_step(&mut self) {
         // Speed caps.
+        let mut capped = Vec::new();
         for g in self.grids.values() {
             let cap = if g.cruise { shared::CRUISE_SPEED_CAP } else { shared::SPEED_CAP };
-            let b = &mut self.phys.bodies[g.body];
-            let v = b.linvel();
+            let v = self.phys.bodies[g.body].linvel();
             if v.length() > cap {
-                b.set_linvel(v.normalize() * cap, false);
+                capped.push((g.body, v.normalize() * cap));
             }
+        }
+        for (body, v) in capped {
+            self.set_body_velocity(body, Some(v), None);
         }
         for p in self.players.values() {
             let b = &mut self.phys.bodies[p.body];
@@ -442,6 +452,48 @@ impl World {
             let grounded = p.seat.is_none()
                 && self.phys.contact_pairs_with(p.collider).any(|c| c.has_any_active_contact());
             self.players.get_mut(&id).unwrap().grounded = grounded;
+        }
+    }
+
+    /// Set a body's velocity. Bodies that are the root of a multibody (grids
+    /// carrying pistons/hinges/rotors) get their velocity from the multibody
+    /// state, so the root's generalized velocity is written as well.
+    pub fn set_body_velocity(&mut self, body: RigidBodyHandle, lin: Option<DVec3>, ang: Option<DVec3>) {
+        if let Some(link) = self.phys.multibody_joints.rigid_body_link(body).map(|l| (l.multibody, l.id)) {
+            if let Some(mb) = self.phys.multibody_joints.get_multibody_mut(link.0) {
+                // A dynamic root has a free joint: 3 linear then 3 angular DOFs.
+                if link.1 == 0 && mb.generalized_velocity().len() >= 6 && self.phys.bodies[body].is_dynamic() {
+                    let mut v = mb.generalized_velocity_mut();
+                    if let Some(l) = lin {
+                        v[0] = l.x;
+                        v[1] = l.y;
+                        v[2] = l.z;
+                    }
+                    if let Some(a) = ang {
+                        v[3] = a.x;
+                        v[4] = a.y;
+                        v[5] = a.z;
+                    }
+                }
+            }
+        }
+        let b = &mut self.phys.bodies[body];
+        if let Some(l) = lin {
+            b.set_linvel(l, true);
+        }
+        if let Some(a) = ang {
+            b.set_angvel(a, true);
+        }
+    }
+
+    /// After moving a multibody's root body, recompute the poses of its links.
+    pub(crate) fn sync_multibody_from_root(&mut self, body: RigidBodyHandle) {
+        if let Some(link) = self.phys.multibody_joints.rigid_body_link(body).map(|l| l.multibody) {
+            let phys = &mut self.phys;
+            if let Some(mb) = phys.multibody_joints.get_multibody_mut(link) {
+                mb.forward_kinematics(&phys.bodies, true);
+                mb.update_rigid_bodies(&mut phys.bodies, true);
+            }
         }
     }
 

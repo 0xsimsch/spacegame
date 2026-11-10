@@ -80,6 +80,8 @@ impl Visuals {
             BlockKind::Cockpit,
             BlockKind::Rotor,
             BlockKind::RotorTop,
+            BlockKind::Gyro,
+            BlockKind::Door,
         ];
         let block_mats = all.iter().map(|k| (*k, material(k.color(), 0.0, 1.0))).collect();
         Self {

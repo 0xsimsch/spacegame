@@ -279,6 +279,129 @@ end
     )
 }
 
+/// The shuttle's flight computer: takeoff, hover, landing, self-levelling, ramp/legs/doors.
+pub fn shuttle_autopilot() -> String {
+    format!(
+        r#"-- Shuttle autopilot. "Run" with:
+--   takeoff        close up, lift off, retract legs, hover at 40 m
+--   hover <m>      hold an altitude
+--   land           deploy legs, descend gently, touch down, open the ramp
+--   level          only keep the shuttle level (fly the thrusters yourself)
+--   off            manual flight from the cockpit
+--   ramp | door    toggle the rear ramp / side door
+{THRUST_HELPER}
+local gyro = grid:block("Gyroscope")
+local ramp = grid:block("Ramp Hinge")
+local doors = {{ grid:block("Side Door Lower"), grid:block("Side Door Upper") }}
+local legs = {{}}
+for i = 1, 4 do legs[i] = grid:block("Leg " .. i) end
+assert(gyro and ramp and legs[4], "needs Gyroscope, Ramp Hinge and Leg 1..4")
+
+local mode = "off"
+local target_alt = 40
+local still = 0
+local ramp_open = false
+
+local function set_ramp(open)
+  ramp_open = open
+  ramp:set_target_angle(if open then -50 else 88)
+end
+local function set_doors(open)
+  for _, d in doors do d:set_open(open) end
+end
+local leg_target = 1
+local function set_legs(extended)
+  leg_target = if extended then 1 else 0
+end
+-- Drive the legs to their target extension (called every tick).
+local function update_legs()
+  for _, l in legs do
+    l:set_velocity(math.clamp((leg_target - l.extension) * 2, -1, 1))
+  end
+end
+local function release()
+  thrust_toward(vector.create(0, 0, 0))
+  gyro:set_override(nil)
+end
+
+-- Turn rate (deg/s) that rotates the grid's up axis onto `want_up` (grid frame).
+local function level_rates(want_up)
+  local up = vector.create(0, 1, 0)
+  local axis = vector.cross(up, want_up)
+  local s = vector.magnitude(axis)
+  local rates = vector.create(0, 0, 0)
+  if s > 1e-4 then
+    local angle = math.deg(math.asin(math.min(1, s)))
+    rates = axis / s * math.min(angle * 1.5, 40)
+  end
+  -- Kill yaw drift as well (rotation around up).
+  return vector.create(rates.x, 0, rates.z)
+end
+
+function on_message(arg)
+  local cmd, value = string.match(arg, "^(%a+)%s*(%-?[%d%.]*)$")
+  cmd = cmd or arg
+  if cmd == "takeoff" then
+    set_ramp(false); set_doors(false)
+    mode, target_alt = "hover", 40
+  elseif cmd == "hover" then
+    mode, target_alt = "hover", tonumber(value) or target_alt
+  elseif cmd == "land" then
+    set_legs(true)
+    mode, still = "land", 0
+  elseif cmd == "level" or cmd == "off" then
+    mode = cmd
+    release()
+  elseif cmd == "ramp" then
+    set_ramp(not ramp_open)
+  elseif cmd == "door" then
+    set_doors(not doors[1].is_open)
+  else
+    print("unknown command", arg)
+    return
+  end
+  print("autopilot:", mode, if mode == "hover" then target_alt .. " m" else "")
+end
+
+set_ramp(false)
+set_legs(true)
+
+function tick(dt)
+  update_legs()
+  if mode == "off" then return end
+  local g = grid.gravity
+  local gl = vector.magnitude(g)
+  local up = if gl > 0.01 then -g / gl else vector.create(0, 1, 0)
+  gyro:set_override(level_rates(up))
+  if mode == "level" then return end
+
+  local vs = vector.dot(grid.velocity, up)
+  local horizontal = grid.velocity - up * vs
+  local want_vs
+  if mode == "hover" then
+    want_vs = math.clamp((target_alt - grid.altitude) * 0.5, -6, 6)
+    if grid.altitude > 12 then set_legs(false) end
+  else -- land
+    want_vs = -math.clamp((grid.altitude - 4) * 0.35, 0.8, 6)
+    if math.abs(vs) < 0.3 and grid.altitude < 8 then
+      still += dt
+    else
+      still = 0
+    end
+    if still > 1 then
+      mode = "off"
+      release()
+      set_ramp(true)
+      print("landed on", grid.planet)
+      return
+    end
+  end
+  thrust_toward(up * (gl + (want_vs - vs) * 1.5) - horizontal * 0.6)
+end
+"#
+    )
+}
+
 pub fn all() -> Vec<(&'static str, String)> {
     vec![
         ("Hello", HELLO.to_string()),
@@ -288,6 +411,7 @@ pub fn all() -> Vec<(&'static str, String)> {
         ("Robot arm", ROBOT.to_string()),
         ("Drawbridge", BRIDGE.to_string()),
         ("Carousel", CAROUSEL.to_string()),
+        ("Shuttle autopilot", shuttle_autopilot()),
         ("Velocity hold", velocity_hold()),
         ("Hover", hover()),
     ]

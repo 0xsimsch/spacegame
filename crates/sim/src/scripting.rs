@@ -25,7 +25,8 @@ impl World {
             gravity: inv * grav.accel,
             altitude: grav.altitude,
             planet: BODIES[grav.nearest].name.to_string(),
-            mass: body.mass(),
+            // Whole mechanical assembly (sub-grids on pistons/hinges/rotors move with it).
+            mass: self.mech_group(g.id).iter().map(|id| self.phys.bodies[self.grids[id].body].mass()).sum(),
             speed: vel.length(),
             cruise: g.cruise,
         };
@@ -37,6 +38,7 @@ impl World {
             for b in og.blocks.values() {
                 let (mut info_thr, mut thr_override, mut thr_out) = (0.0, 0.0, 0.0);
                 let (mut pp, mut pv, mut ha, mut hv, mut ht, mut free) = (0.0, 0.0, 0.0, 0.0, None, false);
+                let (mut gyro, mut door) = (None, false);
                 match &b.state {
                     BlockState::Thruster(t) => {
                         info_thr = THRUSTER_MAX_FORCE;
@@ -54,6 +56,8 @@ impl World {
                         ht = m.target;
                         free = m.free;
                     }
+                    BlockState::Gyro { override_ } => gyro = *override_,
+                    BlockState::Door { open } => door = *open,
                     _ => {}
                 }
                 blocks.push(BlockInfo {
@@ -73,6 +77,8 @@ impl World {
                     hinge_velocity: hv,
                     hinge_target: ht,
                     free,
+                    gyro_override: gyro,
+                    door_open: door,
                 });
             }
         }
@@ -162,7 +168,9 @@ impl World {
                 | Command::PistonVelocity(id, _)
                 | Command::HingeVelocity(id, _)
                 | Command::HingeTarget(id, _)
-                | Command::SetFree(id, _) => Some(*id),
+                | Command::SetFree(id, _)
+                | Command::GyroOverride(id, _)
+                | Command::DoorOpen(id, _) => Some(*id),
                 _ => None,
             };
             if let Some(t) = target {
@@ -182,6 +190,12 @@ impl World {
                 }
                 Command::HingeTarget(id, t) => {
                     let _ = self.set_block_prop(id, BlockProp::HingeTarget(t.map(|t| t as f32)));
+                }
+                Command::GyroOverride(id, w) => {
+                    let _ = self.set_block_prop(id, BlockProp::GyroOverride(w.map(|w| w.as_vec3().to_array())));
+                }
+                Command::DoorOpen(id, on) => {
+                    let _ = self.set_block_prop(id, BlockProp::DoorOpen(on));
                 }
                 Command::SetFree(id, on) => {
                     let _ = self.set_block_prop(id, BlockProp::Free(on));

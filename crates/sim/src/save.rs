@@ -10,6 +10,8 @@ pub enum SavedState {
     Mech { top: Option<GridId>, velocity: f64, target: Option<f64>, value: f64, free: bool },
     Program { source: String, storage: String },
     Cockpit,
+    Gyro { override_: Option<DVec3> },
+    Door { open: bool },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,7 +47,7 @@ pub struct SaveData {
     pub players: Vec<(String, DVec3)>,
 }
 
-const SAVE_VERSION: u32 = 3;
+const SAVE_VERSION: u32 = 4;
 
 impl World {
     pub fn save(&self) -> SaveData {
@@ -73,6 +75,8 @@ impl World {
                             BlockState::Mech(m) => SavedState::Mech { top: m.top, velocity: m.velocity, target: m.target, value: m.value, free: m.free },
                             BlockState::Program(p) => SavedState::Program { source: p.source.clone(), storage: p.storage.clone() },
                             BlockState::Cockpit { .. } => SavedState::Cockpit,
+                            BlockState::Gyro { override_ } => SavedState::Gyro { override_: *override_ },
+                            BlockState::Door { open } => SavedState::Door { open: *open },
                         },
                     })
                     .collect();
@@ -117,6 +121,7 @@ impl World {
         w.tick = data.tick;
         let mut mechs = Vec::new();
         let mut programs = Vec::new();
+        let mut doors = Vec::new();
         for g in &data.grids {
             w.create_grid(g.pos, g.rot, g.is_static, Some(g.id));
             let body = &mut w.phys.bodies[w.grids[&g.id].body];
@@ -137,6 +142,8 @@ impl World {
                         m.target = *target;
                         mechs.push(b.id);
                     }
+                    (SavedState::Gyro { override_: o }, BlockState::Gyro { override_ }) => *override_ = *o,
+                    (SavedState::Door { open }, BlockState::Door { .. }) => doors.push((b.id, *open)),
                     (SavedState::Program { source, storage }, BlockState::Program(p)) => {
                         p.storage = storage.clone();
                         programs.push((b.id, source.clone()));
@@ -147,6 +154,16 @@ impl World {
         }
         for m in mechs {
             w.attach_joint(m);
+        }
+        // Restore velocities after the joints exist (multibody roots keep them there).
+        for g in &data.grids {
+            let body = w.grids[&g.id].body;
+            if !g.is_static && g.mount.is_none() {
+                w.set_body_velocity(body, Some(g.linvel), Some(g.angvel));
+            }
+        }
+        for (d, open) in doors {
+            let _ = w.set_block_prop(d, shared::protocol::BlockProp::DoorOpen(open));
         }
         for (pb, src) in programs {
             let _ = w.upload_script(pb, &src);

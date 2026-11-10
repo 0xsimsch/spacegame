@@ -35,6 +35,9 @@ pub enum BlockProp {
     /// Pistons/hinges/rotors: switch the motor off so the joint moves freely
     /// under external forces (limits still apply).
     Free(bool),
+    /// Gyroscope: target angular velocity in deg/s (grid frame); `None` = off.
+    GyroOverride(Option<[f32; 3]>),
+    DoorOpen(bool),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -139,6 +142,8 @@ pub struct BlockControlInfo {
     pub hinge_velocity: f32,
     pub hinge_target: Option<f32>,
     pub free: bool,
+    pub gyro_override: Option<[f32; 3]>,
+    pub door_open: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

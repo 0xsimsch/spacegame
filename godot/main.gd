@@ -6,9 +6,9 @@ const HELP_TEXT := """[b]Controls[/b]
 WASD move, Space up, C down, Q/E roll (zero-g), mouse look
 J jetpack on/off (off = walk on planets, Space jumps)
 Z inertial dampeners, X cruise mode (raises speed cap to 5 km/s)
-G build mode: 1-7 or mouse wheel pick block (7 = rotor), R/T rotate, B ship/station
+G build mode: 1-9 or mouse wheel pick block (5 rotor, 8 gyroscope, 9 door), R/T rotate, B ship/station
     LMB place (on a block, or in empty space to start a new grid), RMB remove
-F use: sit in cockpit / edit programmable block / control a block
+F use: sit in cockpit / open-close door / edit programmable block / control a block
 K control panel of the grid you look at (or are seated in)
 Enter chat & commands (/help, /tp moon, /spawn ship hover, /save)
 F3 stats overlay, Esc menu
@@ -20,6 +20,8 @@ F3 stats overlay, Esc menu
   hinge:set_velocity(deg/s), hinge:set_target_angle(deg | nil), .angle   (-90..90)
   rotor: same as hinge but spins forever; .angle wraps at -180..180, targets take the short way
   piston/hinge/rotor:set_free(true) switches the motor off (joint moves only from forces), .free
+  gyro:set_override(vector deg/s, grid frame) steers rotation, set_override(nil) = off
+  door:open(), door:close(), door:toggle(), door:set_open(bool), .is_open
   grid.velocity, .angular_velocity, .gravity (grid frame vectors), .altitude, .planet, .mass, .speed
   me:set_frequency(1|10|100), print(...), storage (persistent string)
   function tick(dt) ... end, function on_message(arg) ... end
@@ -540,6 +542,17 @@ func _select_block(id: int) -> void:
 			run.pressed.connect(func(): game.run_script(id, arg.text))
 			row.add_child(run)
 			panel_detail.add_child(row)
+		"gyro":
+			var gcb := CheckBox.new()
+			gcb.text = "Hold orientation (stops all rotation)"
+			gcb.button_pressed = b["gyro_hold"]
+			gcb.toggled.connect(func(on): game.set_gyro_hold(id, on))
+			panel_detail.add_child(gcb)
+			var gl := Label.new()
+			gl.text = "Scripts can command turn rates with gyro:set_override(vector)."
+			panel_detail.add_child(gl)
+		"door":
+			_button("Open / Close", func(): game.set_door(id, not game.block_info(id)["door_open"]))
 		"cockpit":
 			var l := Label.new()
 			l.text = "Look at the cockpit and press F to sit."
@@ -586,6 +599,8 @@ func _update_value_label() -> void:
 			panel_value_label.text = "Angle: %.1f deg (-90 - 90)" % b["value"]
 		"rotor":
 			panel_value_label.text = "Angle: %.1f deg (unlimited)" % b["value"]
+		"door":
+			panel_value_label.text = "Open" if b["door_open"] else "Closed"
 		_:
 			panel_value_label.text = ""
 

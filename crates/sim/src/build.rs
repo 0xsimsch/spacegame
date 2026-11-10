@@ -80,6 +80,8 @@ impl World {
                 last_run_us: 0,
             })),
             BlockKind::Cockpit => BlockState::Cockpit { pilot: None },
+            BlockKind::Gyro => BlockState::Gyro { override_: None },
+            BlockKind::Door => BlockState::Door { open: false },
             _ => BlockState::Plain,
         };
         let name = name.unwrap_or_else(|| self.default_name(grid, kind));
@@ -333,6 +335,15 @@ impl World {
                 m.target = t.map(|t| wrap_deg(t as f64))
             }
             (BlockState::Mech(m), BlockProp::Free(on)) => m.free = on,
+            (BlockState::Gyro { override_ }, BlockProp::GyroOverride(v)) => {
+                *override_ = v.map(|a| DVec3::from(a.map(|x| x as f64)).clamp(DVec3::splat(-GYRO_MAX_RATE_DEG), DVec3::splat(GYRO_MAX_RATE_DEG)))
+            }
+            (BlockState::Door { open }, BlockProp::DoorOpen(on)) => {
+                *open = on;
+                let col = b.collider;
+                // An open door has no collider, so players and blocks pass through.
+                self.phys.colliders[col].set_enabled(!on);
+            }
             (BlockState::Program(p), BlockProp::ScriptFrequency(f)) if [1, 10, 100].contains(&f) => p.frequency = f,
             _ => return Err("property does not apply to this block".into()),
         }
@@ -408,12 +419,15 @@ impl World {
     pub fn teleport_group(&mut self, grid: GridId, pos: DVec3) {
         let Some(origin) = self.grid_pose(grid).map(|p| p.translation) else { return };
         let delta = pos - origin;
-        for g in self.mech_group(grid) {
-            let body = &mut self.phys.bodies[self.grids[&g].body];
-            let t = body.translation();
-            body.set_translation(t + delta, true);
-            body.set_linvel(DVec3::ZERO, true);
-            body.set_angvel(DVec3::ZERO, true);
+        let bodies: Vec<RigidBodyHandle> = self.mech_group(grid).iter().map(|g| self.grids[g].body).collect();
+        for &body in &bodies {
+            let b = &mut self.phys.bodies[body];
+            let t = b.translation();
+            b.set_translation(t + delta, true);
+            self.set_body_velocity(body, Some(DVec3::ZERO), Some(DVec3::ZERO));
+        }
+        for &body in &bodies {
+            self.sync_multibody_from_root(body);
         }
         self.update_seated_players();
     }

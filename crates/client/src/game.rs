@@ -44,6 +44,7 @@ fn quat(q: DQuat) -> Quaternion {
 struct BlockNode {
     flame: Option<Gd<Node3D>>,
     shaft: Option<Gd<Node3D>>,
+    door: Option<Gd<Node3D>>,
 }
 
 struct GridNode {
@@ -240,7 +241,7 @@ impl INode3D for SpaceGame {
                 Key::T => self.build_rot = orient::cycle_up(self.build_rot),
                 Key::F => self.interact(),
                 Key::K => self.open_panel_for_target(),
-                k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6 | Key::KEY_7) => {
+                k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6 | Key::KEY_7 | Key::KEY_8 | Key::KEY_9) => {
                     self.build_kind = (k.ord() - Key::KEY_1.ord()) as usize;
                     self.build_mode = true;
                 }
@@ -425,6 +426,10 @@ impl SpaceGame {
         let Some(hit) = self.target() else { return };
         match hit.kind {
             BlockKind::Cockpit => self.send(ClientMsg::EnterSeat { block: hit.block }),
+            BlockKind::Door => {
+                let open = self.st.values.get(&hit.block).copied().unwrap_or(0.0) > 0.5;
+                self.send(ClientMsg::SetBlockProp { block: hit.block, prop: BlockProp::DoorOpen(!open) });
+            }
             BlockKind::Programmable => {
                 self.send(ClientMsg::RequestScript { block: hit.block });
                 self.st.ui_events.push(UiEvent::OpenEditor { block: hit.block });
@@ -500,6 +505,12 @@ impl SpaceGame {
                     let len = 0.2 + v * 1.4;
                     f.set_scale(Vector3::new(0.35, len, 0.35));
                     f.set_position(Vector3::new(0.0, 0.0, 0.5 + len * 0.5));
+                }
+                if let Some(d) = &mut bn.door {
+                    // value 1 = open: the panel tucks into the top of the frame.
+                    let open = v > 0.5;
+                    d.set_position(Vector3::new(0.0, if open { 0.42 } else { 0.0 }, 0.0));
+                    d.set_scale(Vector3::new(0.82, if open { 0.08 } else { 0.82 }, 0.2));
                 }
                 if let Some(s) = &mut bn.shaft {
                     let len = 1.0 + v.max(0.0);
@@ -588,7 +599,8 @@ impl SpaceGame {
             // Cylinders are along Y; this turns them along -Z/+Z.
             let along_z = Quaternion::from_axis_angle(Vector3::RIGHT, std::f32::consts::FRAC_PI_2);
             let along_x = Quaternion::from_axis_angle(Vector3::BACK, std::f32::consts::FRAC_PI_2);
-            let mut node = BlockNode { flame: None, shaft: None };
+            let mut node = BlockNode { flame: None, shaft: None, door: None };
+            let sphere: Gd<Mesh> = vis.sphere.clone().upcast();
             match b.kind {
                 BlockKind::Thruster => {
                     add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, -0.15), Vector3::new(1.0, 1.0, 0.7), None);
@@ -623,6 +635,20 @@ impl SpaceGame {
                 }
                 BlockKind::Armor => {
                     add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::ONE, None);
+                }
+                BlockKind::Gyro => {
+                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.0, -0.4, 0.0), Vector3::new(1.0, 0.2, 1.0), None);
+                    add(&mut bn, &sphere, mat, Vector3::new(0.0, 0.05, 0.0), Vector3::splat(0.36), None);
+                    add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.05, 0.0), Vector3::new(0.9, 0.06, 0.9), None);
+                }
+                BlockKind::Door => {
+                    // Frame around the opening plus a panel that slides up when open.
+                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.0, 0.45, 0.0), Vector3::new(1.0, 0.1, 1.0), None);
+                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.0, -0.45, 0.0), Vector3::new(1.0, 0.1, 1.0), None);
+                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
+                    add(&mut bn, &cube, &vis.dark, Vector3::new(-0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
+                    let panel = add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::new(0.82, 0.82, 0.2), None);
+                    node.door = Some(panel);
                 }
             }
             root.add_child(&bn);
@@ -730,6 +756,8 @@ impl SpaceGame {
             "hinge_target" => c.and_then(|c| c.hinge_target).unwrap_or(0.0),
             "value" => self.st.values.get(&b.id).copied().unwrap_or(0.0),
             "free" => c.map(|c| c.free).unwrap_or(false),
+            "gyro_hold" => c.and_then(|c| c.gyro_override).is_some(),
+            "door_open" => self.st.values.get(&b.id).copied().unwrap_or(0.0) > 0.5,
         }
     }
 }
@@ -925,6 +953,18 @@ impl SpaceGame {
         self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::Free(free) });
     }
 
+    /// Gyroscope: hold the current orientation (override 0) or switch off.
+    #[func]
+    fn set_gyro_hold(&mut self, block: i64, on: bool) {
+        let v = on.then_some([0.0f32; 3]);
+        self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::GyroOverride(v) });
+    }
+
+    #[func]
+    fn set_door(&mut self, block: i64, open: bool) {
+        self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::DoorOpen(open) });
+    }
+
     #[func]
     fn request_script(&mut self, block: i64) {
         self.send(ClientMsg::RequestScript { block: block as BlockId });
@@ -986,7 +1026,7 @@ impl SpaceGame {
             let kind = BUILDABLE[self.build_kind];
             let f = orient::forward(self.build_rot);
             s += &format!(
-                "BUILD: {} (1-7 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
+                "BUILD: {} (1-9 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
                 kind.display_name(),
                 f,
                 if self.build_static { "STATION (static)" } else { "SHIP (dynamic)" }
@@ -999,6 +1039,9 @@ impl SpaceGame {
                 let action = match b.kind {
                     BlockKind::Cockpit => "[F] sit",
                     BlockKind::Programmable => "[F] edit script",
+                    BlockKind::Door => {
+                        if self.st.values.get(&b.id).copied().unwrap_or(0.0) > 0.5 { "[F] close" } else { "[F] open" }
+                    }
                     k if k.is_terminal() => "[F] control",
                     _ => "",
                 };
@@ -1063,6 +1106,23 @@ impl SpaceGame {
             a.push(&(*id as i64).to_variant());
         }
         a
+    }
+
+    /// For automated tests: look at the block with this name (if known).
+    #[func]
+    fn debug_look_at_block(&mut self, name: GString, height_offset: f64) -> bool {
+        let name = name.to_string();
+        let Some(id) = self.st.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == name).map(|b| b.id) else {
+            return false;
+        };
+        let Some(target) = self.st.block_world_pose(id) else { return false };
+        let up = self.gravity_up(self.cam_world).unwrap_or(DVec3::Y);
+        let fwd = (target.pos + up * height_offset - self.cam_world).normalize();
+        let back = -fwd;
+        let right = up.cross(back).normalize();
+        let u = back.cross(right);
+        self.look = DQuat::from_mat3(&glam::DMat3::from_cols(right, u, back)).normalize();
+        true
     }
 
     /// For automated tests: look at a world direction.

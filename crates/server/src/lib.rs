@@ -437,6 +437,7 @@ impl GameServer {
                     let v = match &blk.state {
                         BlockState::Thruster(t) => t.output,
                         BlockState::Mech(m) => m.value,
+                        BlockState::Door { open } => *open as u8 as f64,
                         _ => continue,
                     };
                     snap.values.push(BlockValue { id: blk.id, value: v as f32 });
@@ -541,7 +542,7 @@ impl GameServer {
                     client,
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
-                     /spawn <ship|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
+                     /spawn <ship|shuttle|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
                      /save - save the world\n/where - show your position",
                 );
                 Ok(())
@@ -576,7 +577,11 @@ impl GameServer {
                 let p = self.world.players[&pid].input.look;
                 let pos = self.world.player_pos(pid).unwrap();
                 let fwd = p * DVec3::NEG_Z;
-                let dist = if matches!(what, "ship" | "pad" | "arm") { 8.0 } else { 15.0 };
+                let dist = match what {
+                    "ship" | "pad" | "arm" => 8.0,
+                    "shuttle" => 12.0,
+                    _ => 15.0,
+                };
                 let at = pos + fwd * dist;
                 let rot = prefabs::surface_orientation(at);
                 let g = gravity_at(at);
@@ -584,7 +589,11 @@ impl GameServer {
                 let at = if let Some(b) = g.body {
                     let body = &shared::solar::BODIES[b];
                     let up = (at - body.position).normalize();
-                    let ground = body.position + up * (body.radius + if what == "ship" { 1.6 } else { 0.6 });
+                    let ground = body.position + up * (body.radius + match what {
+                        "ship" => 1.6,
+                        "shuttle" => 4.0,
+                        _ => 0.6,
+                    });
                     // Big constructs need some room in front of the player.
                     if g.altitude < 20.0 { ground } else { at }
                 } else {
@@ -624,6 +633,8 @@ fn seed_world(world: &mut World) {
     world.spawn_prefab("robot", spawn + rot * DVec3::new(14.0, 0.6, -28.0), rot, None);
     world.spawn_prefab("bridge", spawn + rot * DVec3::new(0.0, 0.6, -42.0), rot, None);
     world.spawn_prefab("carousel", spawn + rot * DVec3::new(32.0, 0.6, -14.0), rot, None);
+    // The shuttle's origin is its floor; its legs reach 3.5 m below.
+    world.spawn_prefab("shuttle", spawn + rot * DVec3::new(-28.0, 4.0, 2.0), rot, None);
 }
 
 /// 20 hovering ships + 30 sweeping arms = 50 scripts, all near the Earth spawn.

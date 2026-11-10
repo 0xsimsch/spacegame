@@ -5,7 +5,7 @@ use shared::BlockId;
 use shared::examples;
 use shared::orient::from_axes;
 
-pub const NAMES: [&str; 8] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel"];
+pub const NAMES: [&str; 9] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle"];
 
 fn rot(fwd: IVec3, up: IVec3) -> u8 {
     from_axes(fwd, up).expect("valid axes")
@@ -24,6 +24,7 @@ impl World {
             "robot" => Some(self.spawn_robot(pos, orientation)),
             "bridge" => Some(self.spawn_bridge(pos, orientation)),
             "carousel" => Some(self.spawn_carousel(pos, orientation)),
+            "shuttle" => Some(self.spawn_shuttle(pos, orientation)),
             _ => None,
         }
     }
@@ -195,6 +196,85 @@ impl World {
             self.insert_block(gondola, IVec3::new(0, -2, 0), ident, BlockKind::Cockpit, None, Some(format!("Gondola Seat {}", i + 1)), false);
         }
         self.finish_controller(g, examples::CAROUSEL);
+        g
+    }
+
+    /// A walk-in shuttle: 5x4x7 hull, cockpit at the front, side door, rear
+    /// loading ramp on a hinge, four piston landing legs, thrusters on all six
+    /// sides, a gyroscope and a flight computer running the autopilot.
+    ///
+    /// Grid frame: -Z forward, +Y up. The origin is the floor centre; the leg
+    /// feet reach 3.5 m below it, so spawn it 3.6 m above the ground.
+    fn spawn_shuttle(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.create_grid(pos, orientation, false, None);
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        let mut hull = Vec::new();
+        for x in -2..=2 {
+            for z in -3..=3 {
+                if !(x == 0 && z == 3) {
+                    hull.push(IVec3::new(x, 0, z)); // floor (the ramp hinge sits at 0,0,3)
+                }
+                hull.push(IVec3::new(x, 3, z)); // roof
+            }
+        }
+        for z in -3..=3 {
+            for y in 1..=2 {
+                hull.push(IVec3::new(2, y, z));
+                if z != 0 {
+                    hull.push(IVec3::new(-2, y, z)); // left wall, door at z = 0
+                }
+            }
+        }
+        // Front wall around the cockpit window.
+        hull.extend([IVec3::new(-1, 1, -3), IVec3::new(1, 1, -3), IVec3::new(-1, 2, -3), IVec3::new(0, 2, -3), IVec3::new(1, 2, -3)]);
+        self.armor(g, hull);
+        let b = |w: &mut World, cell: IVec3, r: u8, k: BlockKind, name: &str| {
+            w.insert_block(g, cell, r, k, None, Some(name.to_string()), false)
+        };
+        b(self, IVec3::new(0, 1, -3), ident, BlockKind::Cockpit, "Shuttle Cockpit");
+        b(self, IVec3::new(1, 1, -2), ident, BlockKind::Programmable, "Shuttle Computer");
+        b(self, IVec3::new(-1, 1, -2), ident, BlockKind::Gyro, "Gyroscope");
+        // Side door: two stacked door blocks facing outwards (-X).
+        let door_rot = rot(IVec3::NEG_X, IVec3::Y);
+        b(self, IVec3::new(-2, 1, 0), door_rot, BlockKind::Door, "Side Door Lower");
+        b(self, IVec3::new(-2, 2, 0), door_rot, BlockKind::Door, "Side Door Upper");
+        // Thrusters (forward = direction they push the ship).
+        let lift = rot(IVec3::Y, IVec3::Z);
+        let mut i = 0;
+        for x in [-1, 1] {
+            for z in [-3, -1, 1, 3] {
+                i += 1;
+                b(self, IVec3::new(x, -1, z), lift, BlockKind::Thruster, &format!("Lift Thruster {i}"));
+            }
+        }
+        let down = rot(IVec3::NEG_Y, IVec3::Z);
+        b(self, IVec3::new(-1, 4, 0), down, BlockKind::Thruster, "Down Thruster 1");
+        b(self, IVec3::new(1, 4, 0), down, BlockKind::Thruster, "Down Thruster 2");
+        let main = rot(IVec3::NEG_Z, IVec3::Y);
+        for (n, c) in [(-2, 1), (-2, 2), (2, 1), (2, 2)].into_iter().enumerate() {
+            b(self, IVec3::new(c.0, c.1, 4), main, BlockKind::Thruster, &format!("Main Thruster {}", n + 1));
+        }
+        let brake = rot(IVec3::Z, IVec3::Y);
+        b(self, IVec3::new(-2, 1, -4), brake, BlockKind::Thruster, "Brake Thruster 1");
+        b(self, IVec3::new(2, 1, -4), brake, BlockKind::Thruster, "Brake Thruster 2");
+        for z in [-2, 2] {
+            b(self, IVec3::new(3, 1, z), rot(IVec3::NEG_X, IVec3::Y), BlockKind::Thruster, &format!("Left Thruster {}", if z < 0 { 1 } else { 2 }));
+            b(self, IVec3::new(-3, 1, z), rot(IVec3::X, IVec3::Y), BlockKind::Thruster, &format!("Right Thruster {}", if z < 0 { 1 } else { 2 }));
+        }
+        // Landing legs: pistons pointing down with a foot block.
+        let mut n = 0;
+        for x in [-2, 2] {
+            for z in [-2, 2] {
+                n += 1;
+                let (_, foot) = self.mech(g, IVec3::new(x, -1, z), IVec3::NEG_Y, IVec3::Z, BlockKind::Piston, &format!("Leg {n}"));
+                self.armor(foot, [IVec3::new(0, -1, 0)]);
+            }
+        }
+        // Rear ramp: hinge in the floor, 3x4 plate; +88 deg closes it upwards.
+        let (_, ramp) = self.mech(g, IVec3::new(0, 0, 3), IVec3::Z, IVec3::Y, BlockKind::Hinge, "Ramp Hinge");
+        self.armor(ramp, (-1..=1).flat_map(|x| (0..4).map(move |z| IVec3::new(x, 0, z))).filter(|c| *c != IVec3::ZERO));
+        let pb = self.grids[&g].blocks[&IVec3::new(1, 1, -2)].id;
+        let _ = self.upload_script(pb, &examples::shuttle_autopilot());
         g
     }
 

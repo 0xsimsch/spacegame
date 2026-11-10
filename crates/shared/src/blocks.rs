@@ -18,10 +18,14 @@ pub enum BlockKind {
     Rotor,
     /// Created automatically on top of a rotor (its own sub-grid).
     RotorTop,
+    /// Steers the grid's angular velocity when given an override (scripts/panel).
+    Gyro,
+    /// Solid when closed; when open its collider is off and you can walk through.
+    Door,
 }
 
 /// Blocks the player can pick in build mode, in hot-bar order.
-pub const BUILDABLE: [BlockKind; 7] = [
+pub const BUILDABLE: [BlockKind; 9] = [
     BlockKind::Armor,
     BlockKind::Thruster,
     BlockKind::Piston,
@@ -29,6 +33,8 @@ pub const BUILDABLE: [BlockKind; 7] = [
     BlockKind::Rotor,
     BlockKind::Programmable,
     BlockKind::Cockpit,
+    BlockKind::Gyro,
+    BlockKind::Door,
 ];
 
 /// Maximum thrust of one thruster in newtons.
@@ -45,6 +51,8 @@ pub const HINGE_MAX_TORQUE: f64 = 1_500_000.0;
 /// Rotor speed limit in degrees per second (no angle limits).
 pub const ROTOR_MAX_SPEED_DEG: f64 = 180.0;
 pub const ROTOR_MAX_TORQUE: f64 = 1_500_000.0;
+/// Gyroscope override limit (deg/s per axis).
+pub const GYRO_MAX_RATE_DEG: f64 = 90.0;
 
 impl BlockKind {
     /// Pistons, hinges and rotors: blocks that carry a head sub-grid on a joint.
@@ -69,6 +77,8 @@ impl BlockKind {
             BlockKind::Cockpit => 150.0,
             BlockKind::Rotor => 250.0,
             BlockKind::RotorTop => 150.0,
+            BlockKind::Gyro => 300.0,
+            BlockKind::Door => 80.0,
         }
     }
 
@@ -84,6 +94,8 @@ impl BlockKind {
             BlockKind::Cockpit => "Cockpit",
             BlockKind::Rotor => "Rotor",
             BlockKind::RotorTop => "Rotor Head",
+            BlockKind::Gyro => "Gyroscope",
+            BlockKind::Door => "Door",
         }
     }
 
@@ -100,6 +112,8 @@ impl BlockKind {
             BlockKind::Cockpit => "cockpit",
             BlockKind::Rotor => "rotor",
             BlockKind::RotorTop => "rotor_top",
+            BlockKind::Gyro => "gyro",
+            BlockKind::Door => "door",
         }
     }
 
@@ -122,6 +136,8 @@ impl BlockKind {
             BlockKind::Programmable => [0.2, 0.7, 0.35],
             BlockKind::Cockpit => [0.75, 0.75, 0.8],
             BlockKind::Rotor | BlockKind::RotorTop => [0.65, 0.3, 0.75],
+            BlockKind::Gyro => [0.85, 0.75, 0.2],
+            BlockKind::Door => [0.45, 0.5, 0.55],
         }
     }
 }

@@ -68,6 +68,25 @@ func _run() -> void:
 	game.debug_set_look(-35.0, 18.0)
 	await _wait(0.3)
 	await _shot("02f_crane")
+	game.debug_look_at_block("Gyroscope", 0.0)
+	await _wait(0.3)
+	await _shot("02g_shuttle")
+	# Open the side door and the ramp from the flight computer, then look again.
+	for gid in game.debug_grid_ids():
+		for blk in game.grid_blocks(gid):
+			if blk["name"] == "Shuttle Computer":
+				game.run_script(blk["id"], "door")
+				game.run_script(blk["id"], "ramp")
+	await _wait(2.5)
+	game.debug_look_at_block("Side Door Lower", 0.0)
+	await _wait(0.3)
+	await _shot("02h_shuttle_open")
+	var found_door := false
+	for gid in game.debug_grid_ids():
+		for blk in game.grid_blocks(gid):
+			if blk["name"] == "Side Door Lower":
+				found_door = true
+	_check(found_door, "shuttle with doors in the demo scene")
 
 	# Build: new grid in front, then a block on it.
 	var before: int = game.debug_counts()["grids"]

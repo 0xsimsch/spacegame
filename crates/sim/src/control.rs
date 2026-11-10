@@ -125,18 +125,39 @@ impl World {
                 }
             }
             // Built-in gyroscope: steer angular velocity toward the rotation input.
-            let body = &mut self.phys.bodies[g.body];
+            let body_h = g.body;
+            if inp.cruise != g.cruise {
+                g.cruise = inp.cruise;
+                self.phys.bodies[body_h].enable_ccd(inp.cruise);
+            }
             let rin = inp.rotation.as_dvec3().clamp(DVec3::splat(-1.0), DVec3::splat(1.0));
             let has_rot = rin.length() > 0.01;
             if has_rot || inp.dampeners {
                 let desired = gp.rotation * cq * (rin * 1.2);
+                let cur = self.phys.bodies[body_h].angvel();
+                self.set_body_velocity(body_h, None, Some(cur + (desired - cur) * 0.3));
+            }
+        }
+        // Gyroscopes with an override steer the grid's angular velocity
+        // (applied after the cockpit, so an autopilot script wins).
+        let mut steer = Vec::new();
+        for g in self.grids.values() {
+            if g.is_static || g.mount.is_some() {
+                continue;
+            }
+            let target = g.blocks.values().find_map(|b| match b.state {
+                BlockState::Gyro { override_: Some(w) } => Some(w),
+                _ => None,
+            });
+            if let Some(w) = target {
+                let body = &self.phys.bodies[g.body];
+                let desired = *body.rotation() * (w * std::f64::consts::PI / 180.0);
                 let cur = body.angvel();
-                body.set_angvel(cur + (desired - cur) * 0.3, true);
+                steer.push((g.body, cur + (desired - cur) * 0.3));
             }
-            if inp.cruise != g.cruise {
-                g.cruise = inp.cruise;
-                body.enable_ccd(inp.cruise);
-            }
+        }
+        for (body, w) in steer {
+            self.set_body_velocity(body, None, Some(w));
         }
     }
 
