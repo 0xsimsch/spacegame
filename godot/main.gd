@@ -19,6 +19,7 @@ F3 stats overlay, Esc menu
   piston:set_velocity(m/s), .extension, .min, .max
   hinge:set_velocity(deg/s), hinge:set_target_angle(deg | nil), .angle   (-90..90)
   rotor: same as hinge but spins forever; .angle wraps at -180..180, targets take the short way
+  piston/hinge/rotor:set_free(true) switches the motor off (joint moves only from forces), .free
   grid.velocity, .angular_velocity, .gravity (grid frame vectors), .altitude, .planet, .mass, .speed
   me:set_frequency(1|10|100), print(...), storage (persistent string)
   function tick(dt) ... end, function on_message(arg) ... end
@@ -485,6 +486,12 @@ func _select_block(id: int) -> void:
 	panel_detail.add_child(kind_l)
 	panel_value_label = Label.new()
 	panel_detail.add_child(panel_value_label)
+	if b["kind"] in ["piston", "hinge", "rotor"]:
+		var fcb := CheckBox.new()
+		fcb.text = "Free (motor off: moves only from outside forces)"
+		fcb.button_pressed = b["free"]
+		fcb.toggled.connect(func(on): game.set_free(id, on))
+		panel_detail.add_child(fcb)
 	match b["kind"]:
 		"thruster":
 			_slider("Override (%)", 0, 100, 1, b["override"] * 100.0, func(v): game.set_thruster_override(id, v / 100.0))

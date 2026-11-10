@@ -57,6 +57,8 @@ pub struct Mech {
     pub target: Option<f64>,
     /// Piston extension (m) or hinge angle (deg), read back after each step.
     pub value: f64,
+    /// Motor off: the joint moves only under external forces.
+    pub free: bool,
 }
 
 pub struct Program {
@@ -324,13 +326,18 @@ impl World {
             piston_velocity: 0.0,
             hinge_velocity: 0.0,
             hinge_target: None,
+            free: false,
         };
         match &b.state {
             BlockState::Thruster(t) => info.thruster_override = t.override_ as f32,
-            BlockState::Mech(m) if b.kind == BlockKind::Piston => info.piston_velocity = m.velocity as f32,
+            BlockState::Mech(m) if b.kind == BlockKind::Piston => {
+                info.piston_velocity = m.velocity as f32;
+                info.free = m.free;
+            }
             BlockState::Mech(m) => {
                 info.hinge_velocity = m.velocity as f32;
                 info.hinge_target = m.target.map(|t| t as f32);
+                info.free = m.free;
             }
             _ => {}
         }

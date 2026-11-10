@@ -729,6 +729,7 @@ impl SpaceGame {
             "hinge_target_enabled" => c.and_then(|c| c.hinge_target).is_some(),
             "hinge_target" => c.and_then(|c| c.hinge_target).unwrap_or(0.0),
             "value" => self.st.values.get(&b.id).copied().unwrap_or(0.0),
+            "free" => c.map(|c| c.free).unwrap_or(false),
         }
     }
 }
@@ -916,6 +917,12 @@ impl SpaceGame {
     fn set_hinge_target(&mut self, block: i64, enabled: bool, deg: f64) {
         let t = enabled.then_some(deg as f32);
         self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::HingeTarget(t) });
+    }
+
+    /// Motor off: the piston/hinge/rotor moves only under external forces.
+    #[func]
+    fn set_free(&mut self, block: i64, free: bool) {
+        self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::Free(free) });
     }
 
     #[func]

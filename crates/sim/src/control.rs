@@ -197,12 +197,18 @@ impl World {
                         };
                         (JointAxis::AngX, v.to_radians())
                     };
-                    updates.push((j, axis, vel));
+                    let max = match b.kind {
+                        _ if m.free => 0.0,
+                        BlockKind::Piston => PISTON_MAX_FORCE,
+                        BlockKind::Rotor => ROTOR_MAX_TORQUE,
+                        _ => HINGE_MAX_TORQUE,
+                    };
+                    updates.push((j, axis, if m.free { 0.0 } else { vel }, max));
                 }
             }
         }
         let mut changed = Vec::new();
-        for (j, axis, vel) in updates {
+        for (j, axis, vel, max) in updates {
             let data = match j {
                 JointRef::Impulse(h) => self.phys.impulse_joints.get_mut(h, true).map(|j| &mut j.data),
                 JointRef::Multi(h) => self
@@ -213,9 +219,11 @@ impl World {
                     .map(|l| &mut l.joint.data),
             };
             let Some(data) = data else { continue };
-            let cur = data.motor(axis).map(|m| m.target_vel).unwrap_or(f64::NAN);
-            if cur != vel {
-                data.set_motor_velocity(axis, vel, 1000.0);
+            let (cur, cur_max) = data.motor(axis).map(|m| (m.target_vel, m.max_force)).unwrap_or((f64::NAN, f64::NAN));
+            if cur != vel || cur_max != max {
+                // A free joint gets no motor at all (zero stiffness, damping and force).
+                data.set_motor_velocity(axis, vel, if max > 0.0 { 1000.0 } else { 0.0 });
+                data.set_motor_max_force(axis, max);
                 changed.push(j);
             }
         }

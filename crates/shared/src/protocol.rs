@@ -32,6 +32,9 @@ pub enum BlockProp {
     /// Hinge or rotor target angle; `None` switches back to velocity mode.
     HingeTarget(Option<f32>),
     ScriptFrequency(u32),
+    /// Pistons/hinges/rotors: switch the motor off so the joint moves freely
+    /// under external forces (limits still apply).
+    Free(bool),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -135,6 +138,7 @@ pub struct BlockControlInfo {
     pub piston_velocity: f32,
     pub hinge_velocity: f32,
     pub hinge_target: Option<f32>,
+    pub free: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

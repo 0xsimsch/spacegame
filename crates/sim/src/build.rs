@@ -65,6 +65,7 @@ impl World {
                 velocity: 0.0,
                 target: None,
                 value: 0.0,
+                free: false,
             }),
             BlockKind::Programmable => BlockState::Program(Box::new(Program {
                 source: String::new(),
@@ -331,6 +332,7 @@ impl World {
             (BlockState::Mech(m), BlockProp::HingeTarget(t)) if b.kind == BlockKind::Rotor => {
                 m.target = t.map(|t| wrap_deg(t as f64))
             }
+            (BlockState::Mech(m), BlockProp::Free(on)) => m.free = on,
             (BlockState::Program(p), BlockProp::ScriptFrequency(f)) if [1, 10, 100].contains(&f) => p.frequency = f,
             _ => return Err("property does not apply to this block".into()),
         }

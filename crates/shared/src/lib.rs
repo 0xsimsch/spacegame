@@ -22,7 +22,7 @@ pub const INTEREST_RADIUS: f64 = 20_000.0;
 pub const SPEED_CAP: f64 = 150.0;
 pub const CRUISE_SPEED_CAP: f64 = 5_000.0;
 /// Bump when the protocol changes so old clients cannot connect.
-pub const PROTOCOL_ID: u64 = 0x5350_4143_0000_0003;
+pub const PROTOCOL_ID: u64 = 0x5350_4143_0000_0004;
 pub const DEFAULT_PORT: u16 = 47_800;
 
 pub type GridId = u32;

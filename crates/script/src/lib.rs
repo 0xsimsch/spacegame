@@ -42,6 +42,7 @@ pub struct BlockInfo {
     pub hinge_angle: f64,
     pub hinge_velocity: f64,
     pub hinge_target: Option<f64>,
+    pub free: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -80,6 +81,7 @@ pub enum Command {
     HingeTarget(BlockId, Option<f64>),
     SetFrequency(u32),
     SetCruise(bool),
+    SetFree(BlockId, bool),
 }
 
 #[derive(Debug, Default)]
@@ -143,6 +145,13 @@ impl UserData for BlockRef {
                 k => Err(mlua::Error::runtime(format!("set_velocity called on a {} block", k.api_name()))),
             }
         });
+        m.add_method("set_free", |lua, this, on: bool| {
+            let k = with_block(lua, this.0, |b| b.kind)?;
+            if !k.is_mech() {
+                return Err(mlua::Error::runtime(format!("set_free called on a {} block", k.api_name())));
+            }
+            push(lua, Command::SetFree(this.0, on))
+        });
         m.add_method("set_target_angle", |lua, this, v: Option<f64>| {
             let k = with_block(lua, this.0, |b| b.kind)?;
             if !k.is_angular() {
@@ -187,6 +196,7 @@ impl UserData for BlockRef {
                         _ => b.piston_velocity,
                     }),
                     "angle" => Value::Number(b.hinge_angle),
+                    "free" => Value::Boolean(b.free),
                     "target_angle" => b.hinge_target.map(Value::Number).unwrap_or(Value::Nil),
                     _ => Value::Nil,
                 })
@@ -434,6 +444,7 @@ mod tests {
                     hinge_angle: 0.0,
                     hinge_velocity: 0.0,
                     hinge_target: None,
+                    free: false,
                 },
                 BlockInfo {
                     id: 3,
@@ -451,6 +462,7 @@ mod tests {
                     hinge_angle: 0.0,
                     hinge_velocity: 0.0,
                     hinge_target: None,
+                    free: false,
                 },
             ],
             ..Default::default()

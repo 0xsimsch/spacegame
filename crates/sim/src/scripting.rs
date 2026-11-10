@@ -36,7 +36,7 @@ impl World {
             let rel_rot = inv * op.rotation;
             for b in og.blocks.values() {
                 let (mut info_thr, mut thr_override, mut thr_out) = (0.0, 0.0, 0.0);
-                let (mut pp, mut pv, mut ha, mut hv, mut ht) = (0.0, 0.0, 0.0, 0.0, None);
+                let (mut pp, mut pv, mut ha, mut hv, mut ht, mut free) = (0.0, 0.0, 0.0, 0.0, None, false);
                 match &b.state {
                     BlockState::Thruster(t) => {
                         info_thr = THRUSTER_MAX_FORCE;
@@ -46,11 +46,13 @@ impl World {
                     BlockState::Mech(m) if b.kind == BlockKind::Piston => {
                         pp = m.value;
                         pv = m.velocity;
+                        free = m.free;
                     }
                     BlockState::Mech(m) => {
                         ha = m.value;
                         hv = m.velocity;
                         ht = m.target;
+                        free = m.free;
                     }
                     _ => {}
                 }
@@ -70,6 +72,7 @@ impl World {
                     hinge_angle: ha,
                     hinge_velocity: hv,
                     hinge_target: ht,
+                    free,
                 });
             }
         }
@@ -158,7 +161,8 @@ impl World {
                 Command::ThrusterOverride(id, _)
                 | Command::PistonVelocity(id, _)
                 | Command::HingeVelocity(id, _)
-                | Command::HingeTarget(id, _) => Some(*id),
+                | Command::HingeTarget(id, _)
+                | Command::SetFree(id, _) => Some(*id),
                 _ => None,
             };
             if let Some(t) = target {
@@ -178,6 +182,9 @@ impl World {
                 }
                 Command::HingeTarget(id, t) => {
                     let _ = self.set_block_prop(id, BlockProp::HingeTarget(t.map(|t| t as f32)));
+                }
+                Command::SetFree(id, on) => {
+                    let _ = self.set_block_prop(id, BlockProp::Free(on));
                 }
                 Command::SetFrequency(f) => {
                     let _ = self.set_block_prop(pb, BlockProp::ScriptFrequency(f));

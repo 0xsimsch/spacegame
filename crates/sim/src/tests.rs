@@ -375,3 +375,30 @@ fn rotor_spins_and_targets() {
     let v = mech_value(&w2, rotor);
     assert!((v - 120.0).abs() < 3.0, "after load: {v}");
 }
+
+/// Free (motor-off) hinges on a spinning rotor swing outwards from physics alone,
+/// close to the textbook angle tan(a) = w^2 r / g.
+#[test]
+fn free_swings_follow_physics() {
+    let mut w = World::new();
+    let pos = above("Earth", 0.6);
+    let base = w.spawn_prefab("carousel", pos, prefabs::surface_orientation(pos), None).unwrap();
+    // Replace the demo script: constant 60 deg/s, swings free.
+    let pb = w.grids[&base].blocks.values().find(|b| b.kind == BlockKind::Programmable).unwrap().id;
+    w.upload_script(pb, "local r = grid:block('Carousel Rotor')\nfor i = 1, 4 do grid:block('Swing ' .. i):set_free(true) end\nfunction tick() r:set_velocity(60) end").unwrap();
+    let swing = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == "Swing 1").unwrap().id;
+    run(&mut w, 25.0);
+    let mut sum = 0.0;
+    let n = 10 * 60;
+    for _ in 0..n {
+        w.step();
+        sum += mech_value(&w, swing);
+    }
+    let avg = sum / n as f64;
+    // w = 60 deg/s, arm radius 4 m plus the swing-out: roughly 25-35 degrees.
+    let w_rad = 60f64.to_radians();
+    let ideal = (w_rad * w_rad * (4.0 + 2.0 * avg.to_radians().sin()) / 9.81).atan().to_degrees();
+    eprintln!("free swing average {avg:.1} deg, textbook {ideal:.1} deg");
+    assert!(avg > 10.0, "gondola should swing outwards, got {avg:.1}");
+    assert!((avg - ideal).abs() < 12.0, "free swing {avg:.1} vs textbook {ideal:.1}");
+}

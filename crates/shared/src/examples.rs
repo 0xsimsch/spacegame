@@ -157,8 +157,11 @@ end
 "#;
 
 /// A carousel: the rotor spins up and down, gondolas swing out like a real chair-o-plane.
-pub const CAROUSEL: &str = r#"-- Carousel: spin up, slow down, reverse. Gondolas swing out by the angle a real
--- swing ride would reach: tan(angle) = w^2 * r / g. Run with a number = top speed (deg/s).
+pub const CAROUSEL: &str = r#"-- Carousel: spin up, slow down, reverse.
+-- By default the swing hinges are FREE (motor off), so the gondolas swing out purely
+-- from the physics of the spinning hub. Run with "motor" to drive them to the angle a
+-- real swing ride would reach instead (tan(angle) = w^2 * r / g), "free" to release
+-- them again, or a number to set the top speed (deg/s).
 local rotor = grid:block("Carousel Rotor")
 local swings = {}
 for i = 1, 4 do
@@ -167,23 +170,36 @@ for i = 1, 4 do
 end
 assert(rotor, "needs a rotor named 'Carousel Rotor'")
 local top_speed = 90
+local free = true
 local t = 0
+for _, s in swings do
+  s:set_free(free)
+end
 
 function tick(dt)
   t += dt
-  local speed = top_speed * math.sin(t * 0.15)
-  rotor:set_velocity(speed)
-  local w = math.rad(rotor.velocity)
-  local radius = 5
-  local angle = math.deg(math.atan(w * w * radius / 9.81))
-  for _, s in swings do
-    s:set_target_angle(math.min(angle, 75))
+  rotor:set_velocity(top_speed * math.sin(t * 0.15))
+  if not free then
+    local w = math.rad(rotor.velocity)
+    local angle = math.deg(math.atan(w * w * 5 / 9.81))
+    for _, s in swings do
+      s:set_target_angle(math.min(angle, 75))
+    end
   end
 end
 
 function on_message(arg)
-  top_speed = math.clamp(tonumber(arg) or top_speed, 0, 180)
-  print("top speed", top_speed, "deg/s; rotor at", rotor.angle, "deg")
+  if arg == "free" or arg == "motor" then
+    free = arg == "free"
+    for _, s in swings do
+      s:set_free(free)
+    end
+    print("swings:", if free then "free (physics)" else "motor-driven")
+  else
+    top_speed = math.clamp(tonumber(arg) or top_speed, 0, 180)
+    print("top speed", top_speed, "deg/s")
+  end
+  print(string.format("rotor %.0f deg; swing 1 at %.1f deg", rotor.angle, swings[1].angle))
 end
 "#;
 
