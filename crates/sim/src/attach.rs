@@ -8,7 +8,7 @@ use shared::orient;
 use shared::protocol::BlockProp;
 
 /// Depth of the landing gear's detection zone in front of its pad (m).
-pub const GEAR_REACH: f64 = 0.6;
+pub const GEAR_REACH: f64 = 0.25;
 /// Connectors see each other within this distance between their faces (m)...
 pub const CONNECTOR_RANGE: f64 = 2.0;
 /// ...and can lock when closer than this.
@@ -99,6 +99,8 @@ struct Port {
     /// Centre of the block's forward face, and the forward direction.
     face: DVec3,
     fwd: DVec3,
+    /// Just disconnected: no magnet pull until the hold expires.
+    hold: bool,
 }
 
 impl World {
@@ -216,9 +218,14 @@ impl World {
         };
         let tick = self.tick;
         if !on {
+            // Both sides wait before auto-locking again, or the other connector
+            // would grab us straight back.
+            let partner = self.attach_mut(block).and_then(|a| a.partner);
             self.unlock_block(block);
-            if let Some(a) = self.attach_mut(block) {
-                a.hold_until = tick + RELOCK_HOLD_TICKS;
+            for id in [Some(block), partner].into_iter().flatten() {
+                if let Some(a) = self.attach_mut(id) {
+                    a.hold_until = tick + RELOCK_HOLD_TICKS;
+                }
             }
             return Ok(());
         }
@@ -339,14 +346,14 @@ impl World {
         let mut out = Vec::new();
         for g in self.grids.values() {
             for b in g.blocks.values() {
-                let active = match &b.state {
-                    BlockState::Connector(a) => kind == BlockKind::Connector && a.partner.is_none(),
-                    BlockState::Merge { enabled, .. } => kind == BlockKind::MergeBlock && *enabled && g.mount.is_none(),
-                    _ => false,
+                let (active, hold) = match &b.state {
+                    BlockState::Connector(a) => (kind == BlockKind::Connector && a.partner.is_none(), a.hold_until > self.tick),
+                    BlockState::Merge { enabled, .. } => (kind == BlockKind::MergeBlock && *enabled && g.mount.is_none(), false),
+                    _ => (false, false),
                 };
                 if active {
                     let (c, _, f) = self.block_world_frame(b.id).unwrap();
-                    out.push(Port { id: b.id, grid: g.id, group: Vec::new(), face: c + f * 0.5, fwd: f });
+                    out.push(Port { id: b.id, grid: g.id, group: Vec::new(), face: c + f * 0.5, fwd: f, hold });
                 }
             }
         }
@@ -396,7 +403,9 @@ impl World {
                         best.insert(x, (y, d));
                     }
                 }
-                pulls.push(((a.grid, a.face), (b.grid, b.face)));
+                if !a.hold && !b.hold {
+                    pulls.push(((a.grid, a.face), (b.grid, b.face)));
+                }
             }
         }
         // Gentle magnets between connectors in range.

@@ -5,8 +5,9 @@ use shared::BlockId;
 use shared::examples;
 use shared::orient::from_axes;
 
-pub const NAMES: [&str; 14] = [
+pub const NAMES: [&str; 17] = [
     "ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle", "drone", "cruiser", "frigate", "tug", "dock",
+    "magnet_crane", "docking_tower", "merge_gantry",
 ];
 
 fn rot(fwd: IVec3, up: IVec3) -> u8 {
@@ -32,6 +33,9 @@ impl World {
             "cruiser" | "frigate" => Some(self.spawn_cruiser(pos, orientation)),
             "tug" => Some(self.spawn_tug(pos, orientation)),
             "dock" => Some(self.spawn_dock(pos, orientation)),
+            "magnet_crane" => Some(self.spawn_magnet_crane(pos, orientation)),
+            "docking_tower" => Some(self.spawn_docking_tower(pos, orientation)),
+            "merge_gantry" => Some(self.spawn_merge_gantry(pos, orientation)),
             _ => None,
         }
     }
@@ -508,6 +512,91 @@ impl World {
         self.armor(g, [IVec3::new(5, 0, 0), IVec3::new(5, 1, 0), IVec3::new(5, 2, 0), IVec3::new(-5, 0, 0), IVec3::new(-5, 1, 0), IVec3::new(-5, 2, 0)]);
         self.insert_block(g, IVec3::new(4, 2, 0), rot(IVec3::NEG_X, IVec3::Y), BlockKind::Connector, None, Some("Dock Connector".into()), false);
         self.insert_block(g, IVec3::new(-4, 2, 0), rot(IVec3::X, IVec3::Y), BlockKind::MergeBlock, None, Some("Dock Merge Block".into()), false);
+        g
+    }
+
+    /// Demo: a rotor crane with a magnet (landing gear) on a piston that carries
+    /// a 3x3 crate from one side to the other and back.
+    fn spawn_magnet_crane(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.create_grid(pos, orientation, true, None);
+        self.armor(g, (-1..=1).flat_map(|x| (-1..=1).map(move |z| IVec3::new(x, 0, z))));
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        self.insert_block(g, IVec3::new(0, 0, 2), ident, BlockKind::Programmable, None, Some("Crane Controller".into()), false);
+        let (_, head) = self.mech(g, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Rotor, "Crane Rotor");
+        self.armor(head, (1..=4).map(|y| IVec3::new(0, y, 0)));
+        self.armor(head, (1..=5).map(|x| IVec3::new(x, 4, 0)));
+        let (_, magnet_head) = self.mech(head, IVec3::new(5, 3, 0), IVec3::NEG_Y, IVec3::Z, BlockKind::Piston, "Magnet Piston");
+        self.insert_block(magnet_head, IVec3::NEG_Y, rot(IVec3::NEG_Y, IVec3::Z), BlockKind::LandingGear, None, Some("Magnet".into()), false);
+        // The crate sits under the magnet (5 m out along +X).
+        let crate_grid = self.create_grid(pos + orientation * DVec3::new(5.0, 0.0, 0.0), orientation, false, None);
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        for x in -1..=1 {
+            for z in -1..=1 {
+                self.insert_block(crate_grid, IVec3::new(x, 0, z), ident, BlockKind::Armor, None, Some("Crate".into()), false);
+            }
+        }
+        self.finish_controller(g, examples::MAGNET_CRANE);
+        g
+    }
+
+    /// A small quad vehicle for the demos: gyroscope, computer, 4 corner lift
+    /// thrusters, one thruster per other direction. `top` goes on top.
+    fn demo_quad(&mut self, pos: DVec3, orientation: DQuat, computer: &str, top: (BlockKind, &str), gears: bool) -> (GridId, BlockId) {
+        let g = self.create_grid(pos, orientation, false, None);
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        let b = |w: &mut World, cell: IVec3, r: u8, k: BlockKind, name: &str| {
+            w.insert_block(g, cell, r, k, None, Some(name.to_string()), false)
+        };
+        b(self, IVec3::ZERO, ident, BlockKind::Gyro, "Gyroscope");
+        let pb = b(self, IVec3::Y, ident, BlockKind::Programmable, computer);
+        b(self, IVec3::new(0, 2, 0), rot(IVec3::Y, IVec3::Z), top.0, top.1);
+        let mut n = 0;
+        for x in [-1, 1] {
+            for z in [-1, 1] {
+                n += 1;
+                b(self, IVec3::new(x, 0, z), rot(IVec3::Y, IVec3::Z), BlockKind::Thruster, &format!("Lift Thruster {n}"));
+            }
+        }
+        b(self, IVec3::new(0, 0, 1), rot(IVec3::NEG_Z, IVec3::Y), BlockKind::Thruster, "Forward Thruster");
+        b(self, IVec3::new(0, 0, -1), rot(IVec3::Z, IVec3::Y), BlockKind::Thruster, "Back Thruster");
+        b(self, IVec3::X, rot(IVec3::NEG_X, IVec3::Y), BlockKind::Thruster, "Left Thruster");
+        b(self, IVec3::NEG_X, rot(IVec3::X, IVec3::Y), BlockKind::Thruster, "Right Thruster");
+        b(self, IVec3::NEG_Y, rot(IVec3::NEG_Y, IVec3::Z), BlockKind::Thruster, "Down Thruster");
+        if gears {
+            b(self, IVec3::new(1, -1, 0), rot(IVec3::NEG_Y, IVec3::Z), BlockKind::LandingGear, "Gear Left");
+            b(self, IVec3::new(-1, -1, 0), rot(IVec3::NEG_Y, IVec3::Z), BlockKind::LandingGear, "Gear Right");
+        }
+        (g, pb)
+    }
+
+    /// A static pad with a pillar and a beam `height` m up; returns the grid.
+    fn demo_tower(&mut self, pos: DVec3, orientation: DQuat, height: i32) -> GridId {
+        let g = self.create_grid(pos, orientation, true, None);
+        self.armor(g, (-2..=2).flat_map(|x| (-2..=2).map(move |z| IVec3::new(x, 0, z))));
+        // The pillar starts at deck level so it is attached to the pad face to face.
+        self.armor(g, (0..=height).map(|y| IVec3::new(3, y, 0)));
+        self.armor(g, (0..=2).map(|x| IVec3::new(x, height, 0)));
+        g
+    }
+
+    /// Demo: a tower with a connector under its beam and a drone that takes off
+    /// from the pad, docks, hangs there, undocks and lands (gear locks) in a loop.
+    fn spawn_docking_tower(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.demo_tower(pos, orientation, 12);
+        self.insert_block(g, IVec3::new(0, 11, 0), rot(IVec3::NEG_Y, IVec3::Z), BlockKind::Connector, None, Some("Tower Connector".into()), false);
+        // The drone stands on its landing gear on the pad (pad top 0.5, gear face 1.5 below its origin).
+        let (_, pb) = self.demo_quad(pos + orientation * DVec3::new(0.0, 2.02, 0.0), orientation, "Drone Computer", (BlockKind::Connector, "Docking Connector"), true);
+        let _ = self.upload_script(pb, &examples::docking_drone());
+        g
+    }
+
+    /// Demo: a gantry with a merge block under its beam and a module that rises,
+    /// merges into the gantry, splits off again and drops, in a loop.
+    fn spawn_merge_gantry(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.demo_tower(pos, orientation, 10);
+        self.insert_block(g, IVec3::new(0, 9, 0), rot(IVec3::NEG_Y, IVec3::Z), BlockKind::MergeBlock, None, Some("Gantry Merge Block".into()), false);
+        let (_, pb) = self.demo_quad(pos + orientation * DVec3::new(0.0, 2.02, 0.0), orientation, "Module Computer", (BlockKind::MergeBlock, "Module Merge Block"), false);
+        let _ = self.upload_script(pb, &examples::merge_module());
         g
     }
 

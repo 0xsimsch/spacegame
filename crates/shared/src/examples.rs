@@ -593,6 +593,241 @@ end
     )
 }
 
+/// Magnet crane: picks up a crate with a landing gear and carries it back and forth.
+pub const MAGNET_CRANE: &str = r#"-- Magnet crane. A landing gear ("Magnet") on a piston picks up the crate,
+-- the rotor swings it to the other side, sets it down and lets go; then it
+-- picks it up again and carries it back. Run "stop" / "start".
+local rotor = grid:block("Crane Rotor")
+local piston = grid:block("Magnet Piston")
+local magnet = grid:block("Magnet")
+assert(rotor and piston and magnet, "needs Crane Rotor, Magnet Piston and Magnet")
+local mode, timer = "lower", 0
+local target, pick_ext = 0, 2
+local running = true
+rotor:set_target_angle(0)
+
+local function set(m)
+  mode, timer = m, 0
+end
+
+local function angle_error()
+  return (rotor.angle - target + 540) % 360 - 180
+end
+
+function on_message(arg)
+  running = arg ~= "stop"
+  print(if running then "crane running" else "crane stopped")
+end
+
+function tick(dt)
+  timer += dt
+  if not running then piston:set_velocity(0) return end
+  if mode == "lower" then
+    piston:set_velocity(0.8)
+    if magnet.locked then
+      pick_ext = piston.extension
+      print(string.format("magnet locked at %.2f m, lifting", pick_ext))
+      set("lift")
+    elseif piston.extension >= 2.6 then
+      -- Stop above the ground (the magnet would lock onto the planet).
+      print("nothing to pick up")
+      set("lift")
+    end
+  elseif mode == "lift" then
+    piston:set_velocity(-1)
+    if piston.extension < 0.05 then
+      if magnet.locked then
+        target = if target == 0 then 180 else 0
+        rotor:set_target_angle(target)
+        set("swing")
+      elseif timer > 1.5 then
+        set("lower")
+      end
+    end
+  elseif mode == "swing" then
+    piston:set_velocity(0)
+    if math.abs(angle_error()) < 1 and timer > 1 then set("set_down") end
+  elseif mode == "set_down" then
+    piston:set_velocity(0.6)
+    if piston.extension >= pick_ext - 0.02 then
+      magnet:unlock()
+      print("set down at", target, "deg")
+      set("lift")
+    end
+  end
+end
+"#;
+
+/// Shared flight helpers for the demo vehicles: thrust allocation and levelling.
+const FLIGHT_HELPER: &str = r#"
+local function key(v)
+  return string.format("%d,%d,%d", math.round(v.x), math.round(v.y), math.round(v.z))
+end
+-- Fire thrusters so the grid accelerates by `accel` (grid frame, m/s^2).
+local function thrust_toward(accel)
+  local thrusters = grid:blocks("thruster")
+  local cap = {}
+  for _, t in thrusters do
+    cap[key(t.forward)] = (cap[key(t.forward)] or 0) + t.max_thrust
+  end
+  for _, t in thrusters do
+    local f = math.max(0, vector.dot(t.forward, accel)) * grid.mass
+    t:set_override(math.clamp(f / cap[key(t.forward)], 0, 1))
+  end
+end
+-- Gyro rates (deg/s) that turn the grid's up axis onto `want_up`, without yaw.
+local function level(want_up)
+  local axis = vector.cross(vector.create(0, 1, 0), want_up)
+  local s = vector.magnitude(axis)
+  if s < 1e-4 then return vector.create(0, 0, 0) end
+  local r = axis / s * math.min(math.deg(math.asin(math.min(1, s))) * 2, 40)
+  return vector.create(r.x, 0, r.z)
+end
+-- Thrust that drives the vertical speed to `want_vs` and kills sideways drift.
+local function fly(want_vs, hold_sideways)
+  local g = grid.gravity
+  local gl = vector.magnitude(g)
+  local up = if gl > 0.01 then -g / gl else vector.create(0, 1, 0)
+  local vs = vector.dot(grid.velocity, up)
+  local side = grid.velocity - up * vs
+  local a = up * (gl + (want_vs - vs) * 2)
+  if hold_sideways then a -= side * 1.5 end
+  thrust_toward(a)
+  return up
+end
+"#;
+
+/// Docking drone: parks on its pad with landing gear, flies up to the tower's
+/// connector, docks, hangs there, undocks and lands again.
+pub fn docking_drone() -> String {
+    format!(
+        r#"-- Docking drone. Cycle: parked on the pad (landing gear locked) ->
+-- climb to the tower -> dock with the connector (thrusters off, it hangs) ->
+-- undock -> descend -> the gear locks onto the pad again. Run "stop" / "start".
+{FLIGHT_HELPER}
+local gyro = grid:block("Gyroscope")
+local port = grid:block("Docking Connector")
+local gears = grid:blocks("landing_gear")
+assert(gyro and port and #gears > 0, "needs Gyroscope, Docking Connector and landing gear")
+local mode, timer = "parked", 0
+local running = true
+
+local function set(m, msg)
+  mode, timer = m, 0
+  if msg then print(msg) end
+end
+
+local function engines_off()
+  thrust_toward(vector.create(0, 0, 0))
+  gyro:set_override(nil)
+end
+
+local function landed()
+  for _, g in gears do
+    if g.locked then return true end
+  end
+  return false
+end
+
+function on_message(arg)
+  running = arg ~= "stop"
+  print(if running then "drone running" else "drone stopped after this cycle")
+end
+
+function tick(dt)
+  timer += dt
+  if mode == "parked" then
+    engines_off()
+    if running and timer > 4 then
+      for _, g in gears do g:unlock() end
+      set("climb", "gear unlocked, climbing to the dock")
+    end
+  elseif mode == "climb" then
+    if port.connected then
+      engines_off()
+      set("docked", "docked - hanging from the connector")
+      return
+    end
+    -- Slow down once the connector magnets have us.
+    local up = fly(if port.ready then 0.2 else 1.5, not port.ready)
+    gyro:set_override(level(up))
+  elseif mode == "docked" then
+    engines_off()
+    if timer > 5 then
+      port:disconnect()
+      set("descend", "undocked, descending")
+    end
+  elseif mode == "descend" then
+    if landed() then
+      engines_off()
+      set("parked", "landed - gear locked to the pad")
+      return
+    end
+    local up = fly(-1.2, true)
+    gyro:set_override(level(up))
+  end
+end
+"#
+    )
+}
+
+/// Merge module: rises into the gantry, merges into it, splits off again.
+pub fn merge_module() -> String {
+    format!(
+        r#"-- Merge module. Cycle: rise under the gantry -> the merge blocks pull the
+-- module into place and fuse it with the gantry (one grid!) -> after a few
+-- seconds the module switches its merge block off, splits away and drops,
+-- then switches it back on and rises again. Run "stop" / "start".
+{FLIGHT_HELPER}
+local gyro = grid:block("Gyroscope")
+local merge = grid:block("Module Merge Block")
+assert(gyro and merge, "needs Gyroscope and Module Merge Block")
+local mode, timer = "rise", 0
+local running = true
+
+local function set(m, msg)
+  mode, timer = m, 0
+  if msg then print(msg) end
+end
+
+function on_message(arg)
+  running = arg ~= "stop"
+  print(if running then "module running" else "module stops after this cycle")
+end
+
+function tick(dt)
+  timer += dt
+  if mode == "merged" then
+    -- We are part of the gantry now: nothing to fly.
+    if running and timer > 4 then
+      merge:set_enabled(false)
+      set("drop", "merge block off - splitting away")
+    end
+    return
+  end
+  if merge.merged then
+    thrust_toward(vector.create(0, 0, 0))
+    gyro:set_override(nil)
+    set("merged", "merged into the gantry")
+    return
+  end
+  if mode == "rise" then
+    -- Once the merge blocks are pulling, just carry our weight and let them work.
+    local up = fly(if merge.ready then 0 else 1.2, not merge.ready)
+    gyro:set_override(level(up))
+  elseif mode == "drop" then
+    local up = fly(if timer < 2 then -1.5 else 0, true)
+    gyro:set_override(level(up))
+    if timer > 5 then
+      merge:set_enabled(true)
+      set("rise", "merge block on - rising")
+    end
+  end
+end
+"#
+    )
+}
+
 pub fn all() -> Vec<(&'static str, String)> {
     vec![
         ("Hello", HELLO.to_string()),
@@ -605,6 +840,9 @@ pub fn all() -> Vec<(&'static str, String)> {
         ("Shuttle autopilot", shuttle_autopilot()),
         ("Follow drone", drone_follow()),
         ("Cruiser computer", CRUISER.to_string()),
+        ("Magnet crane", MAGNET_CRANE.to_string()),
+        ("Docking drone", docking_drone()),
+        ("Merge module", merge_module()),
         ("Velocity hold", velocity_hold()),
         ("Hover", hover()),
     ]

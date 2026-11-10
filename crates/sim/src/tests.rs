@@ -873,3 +873,59 @@ fn tug_parks_on_the_dock() {
         }
     }
 }
+
+/// Script output lines of the programmable block named `name`.
+fn output_of(w: &World, name: &str) -> Vec<String> {
+    let pb = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == name).unwrap().id;
+    let info = w.script_info(pb).unwrap();
+    assert_eq!(info.error, None, "{name} script error");
+    info.output
+}
+
+fn demo_world(prefab: &str) -> World {
+    let mut w = World::new();
+    let ground = above("Earth", 0.0);
+    let rot = prefabs::surface_orientation(ground);
+    w.spawn_prefab(prefab, ground + rot * DVec3::new(0.0, 0.5, 0.0), rot, None).unwrap();
+    w
+}
+
+#[test]
+fn demo_magnet_crane_moves_the_crate() {
+    let mut w = demo_world("magnet_crane");
+    run(&mut w, 40.0);
+    let out = output_of(&w, "Crane Controller");
+    eprintln!("{out:#?}");
+    assert!(out.iter().filter(|l| l.contains("magnet locked")).count() >= 2, "picked the crate up twice");
+    assert!(out.iter().any(|l| l.contains("set down at\t180")), "carried it to the other side");
+    assert!(!out.iter().any(|l| l.contains("nothing")), "never missed the crate");
+}
+
+#[test]
+fn demo_docking_drone_cycles() {
+    let mut w = demo_world("docking_tower");
+    run(&mut w, 40.0);
+    let out = output_of(&w, "Drone Computer");
+    eprintln!("{out:#?}");
+    for step in ["climbing", "docked", "undocked", "landed"] {
+        assert!(out.iter().any(|l| l.contains(step)), "reached: {step}");
+    }
+}
+
+#[test]
+fn demo_merge_module_cycles() {
+    let mut w = demo_world("merge_gantry");
+    let grids0 = w.grids.len();
+    let mut merged_seen = false;
+    for _ in 0..(40 * 60) {
+        w.step();
+        merged_seen |= w.grids.len() < grids0;
+    }
+    let out = output_of(&w, "Module Computer");
+    eprintln!("{out:#?}");
+    assert!(merged_seen, "the module merged into the gantry (one grid less)");
+    assert!(out.iter().filter(|l| l.contains("merged into the gantry")).count() >= 2, "merged, split and merged again");
+    assert!(out.iter().any(|l| l.contains("splitting away")));
+}
+
+

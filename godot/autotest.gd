@@ -71,10 +71,39 @@ func _run() -> void:
 	game.debug_look_at_block("Gyroscope", 0.0)
 	await _wait(0.3)
 	await _shot("02g_shuttle")
+	# The attach-block demos (they loop on their own; give them time).
+	await _wait(8.0)
+	for v in [["Crane Rotor", "02n_magnet_crane"], ["Tower Connector", "02o_docking_tower"], ["Gantry Merge Block", "02p_merge_gantry"]]:
+		game.debug_look_at_block(v[0], -4.0)
+		await _wait(0.4)
+		await _shot(v[1])
+	_check(game.debug_look_at_block("Crate", 0.0), "the crane's crate exists on the client")
+	await _wait(0.3)
+	await _shot("02r_crate")
+	game.debug_key("V")
+	game.debug_zoom(8)
+	for i in range(3):
+		game.debug_look_at_block("Crane Rotor", -3.0)
+		await _wait(0.2)
+		await _shot("02s_crane_%d" % i)
+		await _wait(3.5)
+	game.debug_zoom(-8)
+	game.debug_key("V")
+	# Block labels: walk up to the starter ship.
+	game.debug_look_at_block("Flight Computer", 0.0)
+	await _wait(0.5)
+	_check(game.debug_counts()["labels"] >= 0, "labels counted")
 	# Cockpit views: first person, third person, zoomed out.
 	game.send_chat("/sit")
 	await _wait(1.0)
+	_check(game.debug_counts()["labels"] > 10, "block labels near the cockpit (%d)" % game.debug_counts()["labels"])
 	await _shot("02i_cockpit_first")
+	game.debug_key("V")
+	game.debug_zoom(-4)
+	await _wait(0.5)
+	await _shot("02q_labels_close")
+	game.debug_zoom(4)
+	game.debug_key("V")
 	game.debug_key("V")
 	await _wait(0.5)
 	await _shot("02j_cockpit_third")
@@ -115,24 +144,29 @@ func _run() -> void:
 	_check(found_door, "shuttle with doors in the demo scene")
 
 	# Build: new grid in front, then a block on it.
-	var before: int = game.debug_counts()["grids"]
+	var ids_before: Array = game.debug_grid_ids()
 	# Face away from the demo park so the ray hits nothing.
 	game.debug_set_look(180.0, -10.0)
 	game.debug_key("G")
 	await _wait(0.2)
 	game.debug_click(false)
 	await _wait(1.0)
-	_check(game.debug_counts()["grids"] == before + 1, "placed a new grid")
+	var new_small := 0
+	for gid in game.debug_grid_ids():
+		if not ids_before.has(gid) and game.grid_blocks(gid).size() == 1:
+			new_small += 1
+	_check(new_small == 1, "placed a new grid")
 	game.debug_click(false)
 	await _wait(1.0)
 	await _shot("03_building")
 	game.debug_key("G")
 
-	# Spawn a hovering ship via chat command.
-	before = game.debug_counts()["grids"]
+	# Spawn a hovering ship via chat command (counted by its flight computer:
+	# the merge demo changes the number of grids on its own).
+	before = _count_named("Flight Computer")
 	game.send_chat("/spawn ship hover")
 	await _wait(1.5)
-	_check(game.debug_counts()["grids"] == before + 1, "spawned ship via /spawn")
+	_check(_count_named("Flight Computer") == before + 1, "spawned ship via /spawn")
 
 	# A follow drone: its sensor should see us and it should come over.
 	game.send_chat("/spawn drone")
@@ -258,6 +292,15 @@ func _run() -> void:
 	await _wait(0.5)
 	print(game.stats_text())
 	_finish()
+
+
+func _count_named(block_name: String) -> int:
+	var n := 0
+	for gid in main.game.debug_grid_ids():
+		for blk in main.game.grid_blocks(gid):
+			if blk["name"] == block_name:
+				n += 1
+	return n
 
 
 func shared_hover() -> String:

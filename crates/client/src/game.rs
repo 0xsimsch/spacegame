@@ -30,6 +30,8 @@ const SCALED_SPACE_DIST: f64 = 150_000.0;
 /// Below this altitude the nearest body gets a high-resolution surface patch.
 const PATCH_ALTITUDE: f64 = 40_000.0;
 const CAMERA_FAR: f32 = 400_000.0;
+/// Blocks closer than this to the camera get their type written on each visible face.
+const LABEL_RANGE: f64 = 10.0;
 
 fn gs(s: impl AsRef<str>) -> GString {
     GString::from(s.as_ref())
@@ -71,6 +73,10 @@ pub struct SpaceGame {
     camera: Option<Gd<Camera3D>>,
     sun_light: Option<Gd<DirectionalLight3D>>,
     grid_nodes: HashMap<GridId, GridNode>,
+    /// Face labels of the blocks near the camera (grid, labels).
+    labels: HashMap<BlockId, (GridId, Vec<Gd<Label3D>>)>,
+    labels_on: bool,
+    label_timer: f64,
     player_nodes: HashMap<PlayerId, Gd<Node3D>>,
     planet_nodes: Vec<Gd<MeshInstance3D>>,
     patch: Option<Gd<MeshInstance3D>>,
@@ -113,6 +119,9 @@ impl INode3D for SpaceGame {
             camera: None,
             sun_light: None,
             grid_nodes: HashMap::new(),
+            labels: HashMap::new(),
+            labels_on: true,
+            label_timer: 0.0,
             player_nodes: HashMap::new(),
             planet_nodes: Vec::new(),
             patch: None,
@@ -213,6 +222,11 @@ impl INode3D for SpaceGame {
         self.update_input(delta);
         self.update_camera();
         self.update_world_render();
+        self.label_timer -= delta;
+        if self.label_timer <= 0.0 {
+            self.label_timer = 0.25;
+            self.update_labels();
+        }
         self.update_build_ghost();
         if let Some(n) = &mut self.net {
             n.flush();
@@ -269,6 +283,10 @@ impl INode3D for SpaceGame {
                 Key::K => self.open_panel_for_target(),
                 Key::V => self.third_person = !self.third_person,
                 Key::P => self.toggle_ship_locks(),
+                Key::L => {
+                    self.labels_on = !self.labels_on;
+                    self.label_timer = 0.0;
+                }
                 // Shift+1..4: the second row of blocks (large thruster, landing gear, merge block, connector).
                 key @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4) if k.is_shift_pressed() => {
                     self.build_kind = 10 + (key.ord() - Key::KEY_1.ord()) as usize;
@@ -478,6 +496,77 @@ impl SpaceGame {
         }
     }
 
+    /// Write each nearby block's type on its visible faces (L toggles).
+    fn update_labels(&mut self) {
+        let cam = self.cam_world;
+        let mut wanted: Vec<(GridId, BlockId)> = Vec::new();
+        if self.labels_on {
+            for g in self.st.grids.values() {
+                if !self.grid_nodes.contains_key(&g.id) {
+                    continue;
+                }
+                let Some(pose) = self.st.grid_pose(g.id) else { continue };
+                // Skip grids that are far away as a whole (the cruiser is ~45 m from origin to tip).
+                if (pose.pos - cam).length() > LABEL_RANGE + 150.0 {
+                    continue;
+                }
+                for b in g.blocks.values() {
+                    let c = pose.transform(b.cell.as_dvec3() + b.kind.center_offset(b.rot));
+                    if (c - cam).length() < LABEL_RANGE {
+                        wanted.push((g.id, b.id));
+                    }
+                }
+            }
+        }
+        let keep: std::collections::HashSet<BlockId> = wanted.iter().map(|w| w.1).collect();
+        self.labels.retain(|id, (_, nodes)| {
+            if keep.contains(id) {
+                return true;
+            }
+            for n in nodes.iter_mut() {
+                n.queue_free();
+            }
+            false
+        });
+        for (gid, bid) in wanted {
+            if self.labels.contains_key(&bid) {
+                continue;
+            }
+            let g = &self.st.grids[&gid];
+            let Some(b) = g.blocks.get(&g.by_id[&bid]) else { continue };
+            let size = b.kind.size() as f32;
+            let centre = b.cell.as_dvec3() + b.kind.center_offset(b.rot);
+            let mut nodes = Vec::new();
+            for d in orient::DIRS {
+                // Faces covered by a neighbour are not visible.
+                if b.kind.size() == 1 && g.anchor_at(b.cell + d).is_some() {
+                    continue;
+                }
+                let n = d.as_vec3();
+                let z = Vector3::new(n.x, n.y, n.z);
+                let up = if d.y != 0 { Vector3::new(0.0, 0.0, -d.y as f32) } else { Vector3::UP };
+                let x = up.cross(z);
+                let pos = centre + d.as_dvec3() * (0.5 * size as f64 + 0.012);
+                let mut l = Label3D::new_alloc();
+                l.set_text(b.kind.display_name());
+                l.set_font_size(32);
+                l.set_outline_size(10);
+                l.set_pixel_size(0.0028 * size);
+                l.set_width(320.0);
+                l.set_autowrap_mode(godot::classes::text_server::AutowrapMode::WORD_SMART);
+                l.set_modulate(Color::from_rgba(1.0, 1.0, 1.0, 0.9));
+                l.set_outline_modulate(Color::from_rgba(0.0, 0.0, 0.0, 0.8));
+                l.set_draw_flag(godot::classes::label_3d::DrawFlags::DOUBLE_SIDED, false);
+                l.set_transform(Transform3D::new(Basis::from_cols(x, up, z), v3(pos)));
+                if let Some(node) = self.grid_nodes.get_mut(&gid) {
+                    node.root.add_child(&l);
+                }
+                nodes.push(l);
+            }
+            self.labels.insert(bid, (gid, nodes));
+        }
+    }
+
     /// P: lock every landing gear and connector of the ship you sit in, or
     /// unlock them all if any is locked.
     fn toggle_ship_locks(&mut self) {
@@ -550,6 +639,8 @@ impl SpaceGame {
         self.update_planets(cam);
         // Removed grids.
         for id in std::mem::take(&mut self.st.removed_grids) {
+            // Its labels are children of the grid node and go with it.
+            self.labels.retain(|_, (g, _)| *g != id);
             if let Some(mut g) = self.grid_nodes.remove(&id) {
                 g.root.queue_free();
             }
@@ -641,6 +732,8 @@ impl SpaceGame {
     }
 
     fn rebuild_grid(&mut self, id: GridId) {
+        // The rebuild frees all children, labels included; they come back on the next refresh.
+        self.labels.retain(|_, (g, _)| *g != id);
         let mut root = match self.grid_nodes.remove(&id) {
             Some(old) => {
                 for mut c in old.root.get_children().iter_shared() {
@@ -1243,7 +1336,7 @@ impl SpaceGame {
                 if self.build_static { "STATION (static)" } else { "SHIP (dynamic)" }
             );
         } else {
-            s += "[G] build mode  [F] use  [K] control panel  [V] 1st/3rd person  [Enter] chat  [F1] help\n";
+            s += "[G] build mode  [F] use  [K] control panel  [V] 1st/3rd person  [L] block labels  [Enter] chat  [F1] help\n";
         }
         if let Some(hit) = &self.last_hit {
             if let Some((_, b)) = self.st.block(hit.block) {
@@ -1315,6 +1408,7 @@ impl SpaceGame {
     fn debug_counts(&self) -> VarDictionary {
         vdict! {
             "grids" => self.grid_nodes.len() as i64,
+            "labels" => self.labels.values().map(|(_, n)| n.len()).sum::<usize>() as i64,
             "players" => self.player_nodes.len() as i64,
             "snapshots" => self.st.snapshots_received as i64,
         }

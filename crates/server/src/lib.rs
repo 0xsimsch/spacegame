@@ -574,7 +574,7 @@ impl GameServer {
                     client,
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
-                     /spawn <ship|shuttle|cruiser|drone|tug|dock|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
+                     /spawn <ship|shuttle|cruiser|drone|tug|dock|magnet_crane|docking_tower|merge_gantry|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
                      /sit [cockpit name] - sit in the nearest free cockpit (150 m)\n/save - save the world\n/where - show your position",
                 );
                 Ok(())
@@ -677,6 +677,9 @@ fn seed_world(world: &mut World) {
     world.spawn_prefab("cruiser", spawn + rot * DVec3::new(62.0, 1.6, -20.0), rot, None);
     world.spawn_prefab("dock", spawn + rot * DVec3::new(-14.0, 0.6, 22.0), rot, None);
     world.spawn_prefab("tug", spawn + rot * DVec3::new(-14.0, 2.6, 22.0), rot, None);
+    world.spawn_prefab("magnet_crane", spawn + rot * DVec3::new(20.0, 0.6, 14.0), rot, None);
+    world.spawn_prefab("docking_tower", spawn + rot * DVec3::new(0.0, 0.6, 32.0), rot, None);
+    world.spawn_prefab("merge_gantry", spawn + rot * DVec3::new(12.0, 0.6, 32.0), rot, None);
 }
 
 /// 20 hovering ships + 30 sweeping arms = 50 scripts, all near the Earth spawn.
