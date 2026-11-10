@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 shared.workspace = true
 server.workspace = true
+sim.workspace = true
 glam.workspace = true
 postcard.workspace = true
 renet.workspace = true

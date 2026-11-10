@@ -1,0 +1,100 @@
+# Spacegame prototype
+
+Godot 4.7 client + Rust core. A scaled solar system, multiplayer, grid building,
+pistons/hinges/thrusters and programmable blocks scripted in Luau.
+
+## Run it
+
+```sh
+cargo build                      # builds the GDExtension (target/debug/libclient.so) + server
+godot --path godot               # opens the game: "Host & Play" or "Join"
+```
+
+Dedicated server and test bots:
+
+```sh
+cargo run --release -p server -- [--port 47800] [--save world.save | --no-save] \
+                                 [--latency MS] [--loss PCT] [--stress]
+cargo run --release -p server --bin bot -- --addr 127.0.0.1:47800 --count 4 --seconds 30
+```
+
+Client command-line options (after `--`): `--host`, `--join HOST:PORT`, `--name N`,
+`--port P`, `--autotest [--shots DIR] [--expect-players N]`.
+
+Tests: `cargo test --workspace` (22 tests, including the three acceptance scripts) and
+`godot --headless --path godot -- --autotest --host --port 47891` (end-to-end client smoke test).
+
+## Controls
+
+| Key | Action |
+|---|---|
+| WASD / Space / C | move (jetpack), Q/E roll in zero-g |
+| J / Z / X | jetpack, inertial dampeners, cruise (speed cap 150 → 5000 m/s) |
+| G | build mode: 1-6 / wheel pick block, R/T rotate, B ship/station, LMB place, RMB remove |
+| F | sit in cockpit / edit programmable block / control panel of a block; F again to stand up |
+| K | control panel of the grid you look at or sit in |
+| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn arm`, `/save`, `/where` |
+| F1 / F3 / Esc | help, stats overlay, menu |
+
+## Scripting API (Luau, sandboxed)
+
+```lua
+local arm = grid:block("Arm Piston")       -- by name; grid:blocks("thruster") lists by type
+me:set_frequency(10)                       -- run tick() every 1, 10 or 100 ticks
+function tick(dt)
+  arm:set_velocity(1.5)                    -- piston m/s; hinge deg/s
+  print(arm.extension, grid.altitude, grid.velocity)  -- vectors are in the grid frame
+end
+function on_message(arg) end               -- "Run" button / argument
+```
+
+Blocks: `thruster:set_override(0..1)`, `.max_thrust`, `.current_thrust`, `.forward`;
+`piston:set_velocity`, `.extension`, `.min`, `.max`; `hinge:set_velocity`,
+`hinge:set_target_angle(deg|nil)`, `.angle`. Grid: `velocity`, `world_velocity`,
+`angular_velocity`, `gravity`, `altitude`, `planet`, `mass`, `speed`, `position`,
+`grid:set_cruise(bool)`. Also `print`, `storage` (persisted string), `vector.*`.
+Limits per run: 50k interrupts / 5 ms, 4 MB memory; a failing run applies no commands.
+Examples live in `crates/shared/src/examples.rs` and the editor's "Load example" menu.
+
+## Layout
+
+```
+crates/shared   protocol, block defs, 24 orientations, solar system, example scripts
+crates/script   Luau sandbox: snapshot view in -> commands out (backend-agnostic API)
+crates/sim      authoritative world: rapier3d-f64 physics, grids, joints, cockpit, scripts, save/load
+crates/server   renet server: interest management, snapshots, latency/loss sim, commands; bot binary
+crates/client   GDExtension: networking, interpolation, prediction, floating origin, scaled space, UI bridge
+godot/          project, main.gd (menu, HUD, chat, control panel, script editor), autotest.gd
+```
+
+Key design points:
+
+- **Coordinates**: the server simulates in `f64`. The client renders relative to the camera
+  (floating origin), so stock single-precision Godot works with no custom engine build.
+- **Planets**: bodies farther than 150 km are drawn in scaled space. The nearest body below
+  40 km gets a high-resolution surface patch generated each frame in camera-relative coordinates.
+- **Scripts**: each run reads an immutable snapshot and emits commands. Scripts run in parallel
+  (rayon) and the commands are applied together; a script can only command blocks of its own
+  mechanical group.
+- **Network**: server-authoritative over renet/UDP. Snapshots go out at 30 Hz, other grids are
+  interpolated 100 ms in the past, and the local player is predicted and reconciled. Each client
+  only receives grids and players within 20 km.
+
+## Milestone status
+
+| | Result |
+|---|---|
+| M0 | Workspace, server, client connect, players see each other |
+| M1 | Scaled solar system (10 bodies), f64 + floating origin, scaled space, jetpack/walking, gravity, `/tp` |
+| M2 | Build/remove blocks, new ships or stations, compound colliders, replication |
+| M3 | Thrusters, cockpit with dampeners and gyro, pistons and hinges with sub-grids and joint motors |
+| M4 | Programmable block, Luau sandbox, editor UI; arm sweep, velocity hold and hover pass as tests |
+| M5 | Save/load + autosave, own-player prediction, F3 stats, stress test: 4 players, 115 grids, 52 scripts at ~1.6 ms per tick |
+
+## Known limitations (deliberately out of scope for the prototype)
+
+- Planets do not orbit. There is no grid splitting, damage, power or inventory.
+- One box collider per block (no box merging); one mesh node per block (no MultiMesh yet).
+- The cockpit includes a built-in gyroscope; scripts have no gyro API yet.
+- Prediction ignores collisions (it is corrected by the server state on every snapshot).
+- Block default names are numbered per grid, so sub-grids can repeat names (rename them in the panel).

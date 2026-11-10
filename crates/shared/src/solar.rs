@@ -39,7 +39,7 @@ const DEFS: &[Def] = &[
     Def { name: "Sun", parent: None, real_radius_km: 696_000.0, real_orbit_km: 0.0, angle_deg: 0.0, gravity: 27.4, color: [1.0, 0.85, 0.5] },
     Def { name: "Mercury", parent: Some("Sun"), real_radius_km: 2_440.0, real_orbit_km: 57.9e6, angle_deg: 40.0, gravity: 3.7, color: [0.55, 0.5, 0.45] },
     Def { name: "Venus", parent: Some("Sun"), real_radius_km: 6_052.0, real_orbit_km: 108.2e6, angle_deg: 110.0, gravity: 8.87, color: [0.9, 0.8, 0.55] },
-    Def { name: "Earth", parent: Some("Sun"), real_radius_km: 6_371.0, real_orbit_km: 149.6e6, angle_deg: 0.0, gravity: 9.81, color: [0.2, 0.4, 0.8] },
+    Def { name: "Earth", parent: Some("Sun"), real_radius_km: 6_371.0, real_orbit_km: 149.6e6, angle_deg: 0.0, gravity: 9.81, color: [0.3, 0.5, 0.35] },
     Def { name: "Moon", parent: Some("Earth"), real_radius_km: 1_737.0, real_orbit_km: 384_400.0, angle_deg: 30.0, gravity: 1.62, color: [0.6, 0.6, 0.6] },
     Def { name: "Mars", parent: Some("Sun"), real_radius_km: 3_390.0, real_orbit_km: 227.9e6, angle_deg: -35.0, gravity: 3.72, color: [0.75, 0.35, 0.2] },
     Def { name: "Jupiter", parent: Some("Sun"), real_radius_km: 69_911.0, real_orbit_km: 778.5e6, angle_deg: 200.0, gravity: 24.79, color: [0.8, 0.7, 0.55] },
@@ -125,10 +125,17 @@ pub fn gravity_at(p: DVec3) -> GravityInfo {
     }
 }
 
-/// A spawn point just above Earth's surface (at its "north pole" relative to +Y).
+/// Unit direction from a body's centre to a sunlit point at mid latitude
+/// (sun about 45 degrees above the horizon).
+pub fn sunny_up(body: &Body) -> DVec3 {
+    let to_sun = (BODIES[0].position - body.position).normalize_or(DVec3::X);
+    (to_sun + DVec3::Y).normalize()
+}
+
+/// A spawn point just above Earth's surface, on the day side.
 pub fn default_spawn() -> DVec3 {
     let (_, earth) = body_by_name("Earth").unwrap();
-    earth.position + DVec3::Y * (earth.radius + 3.0)
+    earth.position + sunny_up(earth) * (earth.radius + 3.0)
 }
 
 #[cfg(test)]
