@@ -5,7 +5,7 @@ use shared::BlockId;
 use shared::examples;
 use shared::orient::from_axes;
 
-pub const NAMES: [&str; 9] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle"];
+pub const NAMES: [&str; 10] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle", "drone"];
 
 fn rot(fwd: IVec3, up: IVec3) -> u8 {
     from_axes(fwd, up).expect("valid axes")
@@ -25,6 +25,7 @@ impl World {
             "bridge" => Some(self.spawn_bridge(pos, orientation)),
             "carousel" => Some(self.spawn_carousel(pos, orientation)),
             "shuttle" => Some(self.spawn_shuttle(pos, orientation)),
+            "drone" => Some(self.spawn_drone(pos, orientation)),
             _ => None,
         }
     }
@@ -277,6 +278,35 @@ impl World {
         self.armor(ramp, (-1..=1).flat_map(|x| (0..4).map(move |z| IVec3::new(x, 0, z))).filter(|c| *c != IVec3::ZERO));
         let pb = self.grids[&g].blocks[&IVec3::new(1, 1, -2)].id;
         let _ = self.upload_script(pb, &examples::shuttle_autopilot());
+        g
+    }
+
+    /// A small quad-style drone: four lift thrusters on the corners, one thruster
+    /// per other direction on the edges, a gyroscope in the middle, a sensor on top
+    /// and a computer running the follow script. Spawn its origin 1.6 m above ground.
+    fn spawn_drone(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.create_grid(pos, orientation, false, None);
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        let b = |w: &mut World, cell: IVec3, r: u8, k: BlockKind, name: &str| {
+            w.insert_block(g, cell, r, k, None, Some(name.to_string()), false)
+        };
+        b(self, IVec3::ZERO, ident, BlockKind::Gyro, "Drone Gyro");
+        let pb = b(self, IVec3::Y, ident, BlockKind::Programmable, "Drone Computer");
+        b(self, IVec3::new(0, 2, 0), ident, BlockKind::Sensor, "Drone Sensor");
+        let mut n = 0;
+        for x in [-1, 1] {
+            for z in [-1, 1] {
+                n += 1;
+                b(self, IVec3::new(x, 0, z), rot(IVec3::Y, IVec3::Z), BlockKind::Thruster, &format!("Lift Thruster {n}"));
+            }
+        }
+        // Edge thrusters push through the centre line, so they cause no yaw.
+        b(self, IVec3::new(0, 0, 1), rot(IVec3::NEG_Z, IVec3::Y), BlockKind::Thruster, "Forward Thruster");
+        b(self, IVec3::new(0, 0, -1), rot(IVec3::Z, IVec3::Y), BlockKind::Thruster, "Back Thruster");
+        b(self, IVec3::new(1, 0, 0), rot(IVec3::NEG_X, IVec3::Y), BlockKind::Thruster, "Left Thruster");
+        b(self, IVec3::new(-1, 0, 0), rot(IVec3::X, IVec3::Y), BlockKind::Thruster, "Right Thruster");
+        b(self, IVec3::NEG_Y, rot(IVec3::NEG_Y, IVec3::Z), BlockKind::Thruster, "Down Thruster");
+        let _ = self.upload_script(pb, &examples::drone_follow());
         g
     }
 

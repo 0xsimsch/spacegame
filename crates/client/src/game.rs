@@ -46,6 +46,8 @@ struct BlockNode {
     flame: Option<Gd<Node3D>>,
     shaft: Option<Gd<Node3D>>,
     door: Option<Gd<Node3D>>,
+    /// Sensor "eye" that lights up while it detects someone.
+    eye: Option<Gd<Node3D>>,
 }
 
 struct GridNode {
@@ -261,6 +263,7 @@ impl INode3D for SpaceGame {
                 Key::F => self.interact(),
                 Key::K => self.open_panel_for_target(),
                 Key::V => self.third_person = !self.third_person,
+                Key::KEY_0 => self.build_kind = 9,
                 k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6 | Key::KEY_7 | Key::KEY_8 | Key::KEY_9) => {
                     self.build_kind = (k.ord() - Key::KEY_1.ord()) as usize;
                     self.build_mode = true;
@@ -548,6 +551,9 @@ impl SpaceGame {
                     d.set_position(Vector3::new(0.0, if open { 0.42 } else { 0.0 }, 0.0));
                     d.set_scale(Vector3::new(0.82, if open { 0.08 } else { 0.82 }, 0.2));
                 }
+                if let Some(e) = &mut bn.eye {
+                    e.set_visible(v > 0.5);
+                }
                 if let Some(s) = &mut bn.shaft {
                     let len = 1.0 + v.max(0.0);
                     s.set_scale(Vector3::new(0.3, len, 0.3));
@@ -635,7 +641,7 @@ impl SpaceGame {
             // Cylinders are along Y; this turns them along -Z/+Z.
             let along_z = Quaternion::from_axis_angle(Vector3::RIGHT, std::f32::consts::FRAC_PI_2);
             let along_x = Quaternion::from_axis_angle(Vector3::BACK, std::f32::consts::FRAC_PI_2);
-            let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None };
+            let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None, eye: None };
             let sphere: Gd<Mesh> = vis.sphere.clone().upcast();
             match b.kind {
                 BlockKind::Thruster => {
@@ -685,6 +691,15 @@ impl SpaceGame {
                     add(&mut bn, &cube, &vis.dark, Vector3::new(-0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
                     let panel = add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::new(0.82, 0.82, 0.2), None);
                     node.door = Some(panel);
+                }
+                BlockKind::Sensor => {
+                    // Base, mast and a dome with an eye on the front (-Z) face.
+                    add(&mut bn, &cube, mat, Vector3::new(0.0, -0.3, 0.0), Vector3::new(0.9, 0.35, 0.9), None);
+                    add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.18, 0.4, 0.18), None);
+                    add(&mut bn, &sphere, mat, Vector3::new(0.0, 0.22, 0.0), Vector3::splat(0.26), None);
+                    add(&mut bn, &sphere, &vis.dark, Vector3::new(0.0, 0.22, -0.2), Vector3::splat(0.09), None);
+                    let eye = add(&mut bn, &sphere, &vis.sensor_on, Vector3::new(0.0, 0.22, -0.21), Vector3::splat(0.1), None);
+                    node.eye = Some(eye);
                 }
             }
             root.add_child(&bn);
@@ -801,6 +816,7 @@ impl SpaceGame {
             "free" => c.map(|c| c.free).unwrap_or(false),
             "gyro_hold" => c.and_then(|c| c.gyro_override).is_some(),
             "door_open" => self.st.values.get(&b.id).copied().unwrap_or(0.0) > 0.5,
+            "sensor_range" => c.map(|c| c.sensor_range).unwrap_or(shared::blocks::SENSOR_DEFAULT_RANGE as f32),
         }
     }
 }
@@ -1004,6 +1020,11 @@ impl SpaceGame {
     }
 
     #[func]
+    fn set_sensor_range(&mut self, block: i64, range: f64) {
+        self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::SensorRange(range as f32) });
+    }
+
+    #[func]
     fn set_door(&mut self, block: i64, open: bool) {
         self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::DoorOpen(open) });
     }
@@ -1070,7 +1091,7 @@ impl SpaceGame {
             let kind = BUILDABLE[self.build_kind];
             let f = orient::forward(self.build_rot);
             s += &format!(
-                "BUILD: {} (1-9 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
+                "BUILD: {} (1-0 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
                 kind.display_name(),
                 f,
                 if self.build_static { "STATION (static)" } else { "SHIP (dynamic)" }

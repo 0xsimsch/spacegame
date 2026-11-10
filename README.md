@@ -21,7 +21,7 @@ cargo run --release -p server --bin bot -- --addr 127.0.0.1:47800 --count 4 --se
 Client command-line options (after `--`): `--host`, `--join HOST:PORT`, `--name N`,
 `--port P`, `--autotest [--shots DIR] [--expect-players N]`.
 
-Tests: `cargo test --workspace` (28 tests, including the three acceptance scripts) and
+Tests: `cargo test --workspace` (31 tests, including the three acceptance scripts) and
 `godot --headless --path godot -- --autotest --host --port 47891` (end-to-end client smoke test).
 
 ## Controls
@@ -30,10 +30,10 @@ Tests: `cargo test --workspace` (28 tests, including the three acceptance script
 |---|---|
 | WASD / Space / C | move (jetpack), Q/E roll in zero-g |
 | J / Z / X | jetpack, inertial dampeners, cruise (speed cap 150 → 5000 m/s) |
-| G | build mode: 1-9 / wheel pick block (5 rotor, 8 gyroscope, 9 door), R/T rotate, B ship/station, LMB place, RMB remove |
+| G | build mode: 1-9, 0 / wheel pick block (5 rotor, 8 gyroscope, 9 door, 0 sensor), R/T rotate, B ship/station, LMB place, RMB remove |
 | F | sit in cockpit / open or close a door / edit programmable block / control panel of a block; F again to stand up |
 | K | control panel of the grid you look at or sit in |
-| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <shuttle\|arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
+| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <shuttle\|drone\|arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
 | V | first / third person; in third person the mouse wheel zooms (seated: chase camera fixed to the seat, 3-300 m) |
 | F1 / F3 / Esc | help, stats overlay, menu |
 
@@ -51,6 +51,7 @@ driven by its own programmable block; open it with F to read or change the scrip
 | Carousel | rotor → hub with 4 arms → swing hinges → gondolas with seats | spins up, slows, reverses; the swing hinges are free, so the gondolas swing out from real centrifugal force. Run `motor` to drive them to atan(ω²r/g) instead. Sit in one with F |
 | Shuttle | 5×4×7 walk-in hull: cockpit, side door, rear ramp on a hinge, 4 piston landing legs, 18 thrusters on all six sides, gyroscope | the "Shuttle Computer" autopilot. Run with `takeoff`, `hover 60`, `land` (lands and opens the ramp), `level`, `off` (manual), `ramp`, `door`. It keeps itself level with the gyroscope |
 | Drawbridge | wall → hinge → 3×6 deck | opens/closes every 8 s. Run with `open`, `close` or `auto` |
+| Drone | quad layout: 4 corner lift thrusters, one thruster per other direction, gyroscope, sensor on top | the "Drone Computer" follows the nearest player its sensor sees (150 m), 5 m away and 3 m up, facing them. Run with `follow`, `follow <name>`, `stay`, `off`, `distance 8`, `height 5`. `/spawn drone` makes another |
 
 Mechanical joints are Rapier multibody (reduced-coordinate) joints, so long chains stay stiff.
 To regenerate the demo world, delete `world.save`: in `~/.local/share/godot/app_userdata/Spacegame Prototype/`
@@ -75,7 +76,10 @@ limits around its forward axis, `.angle` wraps at ±180 and targets take the sho
 Any piston/hinge/rotor: `set_free(true)` turns the motor off so the joint moves only from
 external forces (limits still apply); `.free`. The control panel has the same switch.
 Gyroscope: `gyro:set_override(vector)` sets turn rates in deg/s (grid frame), `set_override(nil)` turns it off.
-Door: `door:open()`, `door:close()`, `door:toggle()`, `door:set_open(bool)`, `.is_open`. An open door has no collider. Grid: `velocity`, `world_velocity`,
+Door: `door:open()`, `door:close()`, `door:toggle()`, `door:set_open(bool)`, `.is_open`. An open door has no collider.
+Sensor: `sensor.players` lists the players in range, nearest first, as tables with `name`, `id`,
+`position` (grid frame, relative to the grid origin), `velocity` (grid frame), `distance`, `seated`;
+`sensor:closest()`, `.detected`, `.count`, `.range`, `sensor:set_range(1..500)` (default 50 m). Grid: `velocity`, `world_velocity`,
 `angular_velocity`, `gravity`, `altitude`, `planet`, `mass`, `speed`, `position`,
 `grid:set_cruise(bool)`. Also `print`, `storage` (persisted string), `vector.*`.
 Limits per run: 50k interrupts / 5 ms, 4 MB memory; a failing run applies no commands.
@@ -120,6 +124,5 @@ Key design points:
 
 - Planets do not orbit. There is no grid splitting, damage, power or inventory.
 - One box collider per block (no box merging); one mesh node per block (no MultiMesh yet).
-- The cockpit includes a built-in gyroscope; scripts have no gyro API yet.
 - Prediction ignores collisions (it is corrected by the server state on every snapshot).
 - Block default names are numbered per grid, so sub-grids can repeat names (rename them in the panel).

@@ -12,6 +12,7 @@ pub enum SavedState {
     Cockpit,
     Gyro { override_: Option<DVec3> },
     Door { open: bool },
+    Sensor { range: f64 },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +78,7 @@ impl World {
                             BlockState::Cockpit { .. } => SavedState::Cockpit,
                             BlockState::Gyro { override_ } => SavedState::Gyro { override_: *override_ },
                             BlockState::Door { open } => SavedState::Door { open: *open },
+                            BlockState::Sensor { range, .. } => SavedState::Sensor { range: *range },
                         },
                     })
                     .collect();
@@ -144,6 +146,7 @@ impl World {
                     }
                     (SavedState::Gyro { override_: o }, BlockState::Gyro { override_ }) => *override_ = *o,
                     (SavedState::Door { open }, BlockState::Door { .. }) => doors.push((b.id, *open)),
+                    (SavedState::Sensor { range: r }, BlockState::Sensor { range, .. }) => *range = *r,
                     (SavedState::Program { source, storage }, BlockState::Program(p)) => {
                         p.storage = storage.clone();
                         programs.push((b.id, source.clone()));

@@ -506,3 +506,86 @@ fn gyro_and_teleport_on_jointed_ship() {
     let after = w.grid_pose(leg_head).unwrap().translation - p;
     assert!((after - before).length() < 0.5, "legs came along");
 }
+
+#[test]
+fn sensor_detects_players_in_range() {
+    let mut w = World::new();
+    let g = w.create_grid(deep_space(), DQuat::IDENTITY, true, None);
+    let s = w.insert_block(g, IVec3::ZERO, ident(), BlockKind::Sensor, None, Some("Eye".into()), false);
+    w.add_player(1, "near");
+    w.add_player(2, "far");
+    w.teleport_player(1, deep_space() + DVec3::new(0.0, 0.0, -10.0));
+    w.teleport_player(2, deep_space() + DVec3::new(80.0, 0.0, 0.0));
+    w.step();
+    let detected = |w: &World| match w.block(s).unwrap().1.state {
+        BlockState::Sensor { detected, .. } => detected,
+        _ => unreachable!(),
+    };
+    assert_eq!(detected(&w), 1, "default range 50 m sees only the near player");
+    w.set_block_prop(s, BlockProp::SensorRange(100.0)).unwrap();
+    w.step();
+    assert_eq!(detected(&w), 2);
+    // Scripts see both, nearest first, in the grid frame.
+    let pb = w.insert_block(g, IVec3::X, ident(), BlockKind::Programmable, None, None, false);
+    w.upload_script(pb, r#"
+        local s = grid:block("Eye")
+        function tick()
+          local p = s:closest()
+          print(s.count, p.name, math.round(p.position.z), math.round(p.distance), s.players[2].name)
+        end
+    "#).unwrap();
+    w.step();
+    let out = w.script_info(pb).unwrap().output;
+    assert_eq!(out.last().map(String::as_str), Some("2\tnear\t-10\t10\tfar"), "{out:?}");
+    // Range survives save/load.
+    let w2 = World::load_bytes(&w.save_bytes()).unwrap();
+    assert!(matches!(w2.block(s).unwrap().1.state, BlockState::Sensor { range, .. } if range == 100.0));
+}
+
+#[test]
+fn drone_follows_player() {
+    let mut w = World::new();
+    let ground = above("Earth", 0.0);
+    let rot = prefabs::surface_orientation(ground);
+    let up = rot * DVec3::Y;
+    w.add_player(1, "pilot");
+    w.teleport_player(1, ground + up * 1.0 + rot * DVec3::new(0.0, 0.0, -10.0));
+    let g = w.spawn_prefab("drone", ground + up * 1.6, rot, None).unwrap();
+    let pb = w.grids[&g].blocks.values().find(|b| b.name == "Drone Computer").unwrap().id;
+    assert_eq!(w.script_info(pb).unwrap().error, None);
+    let dist_to = |w: &World| {
+        let d = w.grid_pose(g).unwrap().translation;
+        let p = w.player_pos(1).unwrap();
+        let rel = d - p;
+        let h = rel.dot(up);
+        ((rel - up * h).length(), h)
+    };
+    run(&mut w, 8.0);
+    let (hd, h) = dist_to(&w);
+    eprintln!("station: horizontal {hd:.1} m, height {h:.1} m, tilt {:.1}", tilt_deg(&w, g));
+    assert!((hd - 5.0).abs() < 1.5 && (h - 3.0).abs() < 1.5, "keeps station 5 m away, 3 m up");
+    assert!(tilt_deg(&w, g) < 10.0);
+    // The player moves 40 m away: the drone follows.
+    let p = w.player_pos(1).unwrap();
+    w.teleport_player(1, p + rot * DVec3::new(40.0, 0.0, 0.0));
+    let mut max_tilt: f64 = 0.0;
+    for i in 0..600 {
+        w.step();
+        max_tilt = max_tilt.max(tilt_deg(&w, g));
+        if i % 60 == 0 {
+            let (hd, h) = dist_to(&w);
+            eprintln!("t={}s horizontal {hd:.1} height {h:.1} speed {:.1}", i / 60, w.phys.bodies[w.grids[&g].body].linvel().length());
+        }
+    }
+    assert!(max_tilt < 25.0, "max tilt while chasing {max_tilt:.1}");
+    let (hd, h) = dist_to(&w);
+    eprintln!("after move: horizontal {hd:.1} m, height {h:.1} m");
+    assert!((hd - 5.0).abs() < 1.5 && (h - 3.0).abs() < 1.5);
+    // Facing the player: forward (-Z) points at them horizontally.
+    let pose = w.grid_pose(g).unwrap();
+    let to = w.player_pos(1).unwrap() - pose.translation;
+    let to_h = (to - up * to.dot(up)).normalize();
+    let fwd = pose.rotation * DVec3::NEG_Z;
+    assert!(fwd.dot(to_h) > 0.9, "faces the player: {:.2}", fwd.dot(to_h));
+    assert_eq!(w.script_info(pb).unwrap().error, None);
+}

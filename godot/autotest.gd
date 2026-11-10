@@ -134,6 +134,24 @@ func _run() -> void:
 	await _wait(1.5)
 	_check(game.debug_counts()["grids"] == before + 1, "spawned ship via /spawn")
 
+	# A follow drone: its sensor should see us and it should come over.
+	game.send_chat("/spawn drone")
+	await _wait(6.0)
+	var sees := false
+	for gid in game.debug_grid_ids():
+		for blk in game.grid_blocks(gid):
+			if blk["name"] == "Drone Sensor" and game.block_info(blk["id"])["value"] >= 1.0:
+				sees = true
+	_check(sees, "drone sensor detects the player")
+	game.debug_look_at_block("Drone Sensor", 0.0)
+	await _wait(0.3)
+	await _shot("04a_drone")
+	game.debug_key("V")
+	game.debug_set_look(150.0, -15.0)
+	await _wait(0.5)
+	await _shot("04b_drone_third")
+	game.debug_key("V")
+
 	# Script editor round trip on the spawned ship's flight computer.
 	var pb := -1
 	for gid in game.debug_grid_ids():

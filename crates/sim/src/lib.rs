@@ -91,6 +91,8 @@ pub enum BlockState {
     /// Target angular velocity in deg/s (grid frame), if overridden.
     Gyro { override_: Option<DVec3> },
     Door { open: bool },
+    /// Detection range (m) and how many players were inside it last tick.
+    Sensor { range: f64, detected: u32 },
 }
 
 #[derive(Debug)]
@@ -332,6 +334,7 @@ impl World {
             free: false,
             gyro_override: None,
             door_open: false,
+            sensor_range: 0.0,
         };
         match &b.state {
             BlockState::Thruster(t) => info.thruster_override = t.override_ as f32,
@@ -346,6 +349,7 @@ impl World {
             }
             BlockState::Gyro { override_ } => info.gyro_override = override_.map(|v| v.as_vec3().to_array()),
             BlockState::Door { open } => info.door_open = *open,
+            BlockState::Sensor { range, .. } => info.sensor_range = *range as f32,
             _ => {}
         }
         Some(info)
@@ -445,6 +449,7 @@ impl World {
         }
         self.read_mech_values();
         self.update_seated_players();
+        self.update_sensors();
         // Grounded detection.
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for id in ids {
@@ -493,6 +498,39 @@ impl World {
             if let Some(mb) = phys.multibody_joints.get_multibody_mut(link) {
                 mb.forward_kinematics(&phys.bodies, true);
                 mb.update_rigid_bodies(&mut phys.bodies, true);
+            }
+        }
+    }
+
+    /// Players within `range` of `pos`, nearest first: (id, position, velocity, distance).
+    pub fn players_near(&self, pos: DVec3, range: f64) -> Vec<(PlayerId, DVec3, DVec3, f64)> {
+        let mut out: Vec<_> = self
+            .players
+            .values()
+            .filter_map(|p| {
+                let b = &self.phys.bodies[p.body];
+                let d = (b.translation() - pos).length();
+                (d <= range).then(|| (p.id, b.translation(), b.linvel(), d))
+            })
+            .collect();
+        out.sort_by(|a, b| a.3.total_cmp(&b.3));
+        out
+    }
+
+    fn update_sensors(&mut self) {
+        let mut counts = Vec::new();
+        for g in self.grids.values() {
+            for b in g.blocks.values() {
+                if let BlockState::Sensor { range, .. } = b.state {
+                    if let Some(pos) = self.block_world_pos(b.id) {
+                        counts.push((b.id, self.players_near(pos, range).len() as u32));
+                    }
+                }
+            }
+        }
+        for (id, n) in counts {
+            if let Some(BlockState::Sensor { detected, .. }) = self.block_mut(id).map(|b| &mut b.state) {
+                *detected = n;
             }
         }
     }

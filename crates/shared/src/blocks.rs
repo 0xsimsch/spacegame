@@ -22,10 +22,12 @@ pub enum BlockKind {
     Gyro,
     /// Solid when closed; when open its collider is off and you can walk through.
     Door,
+    /// Detects players within a configurable range (read by scripts).
+    Sensor,
 }
 
 /// Blocks the player can pick in build mode, in hot-bar order.
-pub const BUILDABLE: [BlockKind; 9] = [
+pub const BUILDABLE: [BlockKind; 10] = [
     BlockKind::Armor,
     BlockKind::Thruster,
     BlockKind::Piston,
@@ -35,6 +37,7 @@ pub const BUILDABLE: [BlockKind; 9] = [
     BlockKind::Cockpit,
     BlockKind::Gyro,
     BlockKind::Door,
+    BlockKind::Sensor,
 ];
 
 /// Maximum thrust of one thruster in newtons.
@@ -53,6 +56,9 @@ pub const ROTOR_MAX_SPEED_DEG: f64 = 180.0;
 pub const ROTOR_MAX_TORQUE: f64 = 1_500_000.0;
 /// Gyroscope override limit (deg/s per axis).
 pub const GYRO_MAX_RATE_DEG: f64 = 90.0;
+/// Sensor detection range in metres (default and maximum).
+pub const SENSOR_DEFAULT_RANGE: f64 = 50.0;
+pub const SENSOR_MAX_RANGE: f64 = 500.0;
 
 impl BlockKind {
     /// Pistons, hinges and rotors: blocks that carry a head sub-grid on a joint.
@@ -79,6 +85,7 @@ impl BlockKind {
             BlockKind::RotorTop => 150.0,
             BlockKind::Gyro => 300.0,
             BlockKind::Door => 80.0,
+            BlockKind::Sensor => 120.0,
         }
     }
 
@@ -96,6 +103,7 @@ impl BlockKind {
             BlockKind::RotorTop => "Rotor Head",
             BlockKind::Gyro => "Gyroscope",
             BlockKind::Door => "Door",
+            BlockKind::Sensor => "Sensor",
         }
     }
 
@@ -114,6 +122,7 @@ impl BlockKind {
             BlockKind::RotorTop => "rotor_top",
             BlockKind::Gyro => "gyro",
             BlockKind::Door => "door",
+            BlockKind::Sensor => "sensor",
         }
     }
 
@@ -138,6 +147,7 @@ impl BlockKind {
             BlockKind::Rotor | BlockKind::RotorTop => [0.65, 0.3, 0.75],
             BlockKind::Gyro => [0.85, 0.75, 0.2],
             BlockKind::Door => [0.45, 0.5, 0.55],
+            BlockKind::Sensor => [0.15, 0.7, 0.75],
         }
     }
 }

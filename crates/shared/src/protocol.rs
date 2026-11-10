@@ -38,6 +38,8 @@ pub enum BlockProp {
     /// Gyroscope: target angular velocity in deg/s (grid frame); `None` = off.
     GyroOverride(Option<[f32; 3]>),
     DoorOpen(bool),
+    /// Sensor detection range in metres.
+    SensorRange(f32),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,8 +98,8 @@ pub struct GridState {
     pub angvel: Vec3,
 }
 
-/// A per-block animated value: thruster output (0..1), piston extension (m)
-/// or hinge angle (deg).
+/// A per-block animated value: thruster output (0..1), piston extension (m),
+/// hinge angle (deg), door open (1/0) or number of players a sensor detects.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockValue {
     pub id: BlockId,
@@ -144,6 +146,7 @@ pub struct BlockControlInfo {
     pub free: bool,
     pub gyro_override: Option<[f32; 3]>,
     pub door_open: bool,
+    pub sensor_range: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

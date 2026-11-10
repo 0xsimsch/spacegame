@@ -402,6 +402,121 @@ end
     )
 }
 
+/// The follow drone: finds players with its sensor and flies after the nearest one.
+pub fn drone_follow() -> String {
+    format!(
+        r#"-- Follow drone. It looks for players with its sensor and keeps station
+-- a few metres behind and above the nearest one, facing them. "Run" with:
+--   follow         follow the nearest player (default)
+--   follow <name>  follow only that player
+--   stay           hover where it is
+--   off            switch the thrusters and gyroscope off (it drops!)
+--   distance <m>   horizontal stand-off (default 5)
+--   height <m>     height above the player (default 3)
+{THRUST_HELPER}
+local sensor = grid:block("Drone Sensor")
+local gyro = grid:block("Drone Gyro")
+assert(sensor and gyro, "needs a sensor named 'Drone Sensor' and a gyroscope named 'Drone Gyro'")
+sensor:set_range(150)
+
+local mode = "follow"
+local target_name = nil
+local distance, height = 5, 3
+local max_speed = 30
+local lost = 0
+
+-- Gyroscope rates (deg/s) that level the drone and turn its front (-Z) toward `look`.
+local function steer(up, look)
+  local axis = vector.cross(vector.create(0, 1, 0), up)
+  local s = vector.magnitude(axis)
+  local rates = vector.create(0, 0, 0)
+  if s > 1e-4 then
+    rates = axis / s * math.min(math.deg(math.asin(math.min(1, s))) * 2, 60)
+  end
+  local yaw = 0
+  if look then
+    local h = look - up * vector.dot(look, up)
+    if vector.magnitude(h) > 0.5 then
+      local f = vector.create(0, 0, -1)
+      h = vector.normalize(h)
+      local angle = math.deg(math.atan2(vector.dot(vector.cross(f, h), up), vector.dot(f, h)))
+      yaw = math.clamp(angle * 2, -90, 90)
+    end
+  end
+  return vector.create(rates.x, yaw, rates.z)
+end
+
+local function pick()
+  for _, p in sensor.players do
+    if target_name == nil or string.lower(p.name) == target_name then
+      return p
+    end
+  end
+  return nil
+end
+
+function on_message(arg)
+  local cmd, value = string.match(arg, "^(%a+)%s*(.*)$")
+  cmd = cmd or arg
+  if cmd == "follow" then
+    mode = "follow"
+    target_name = if value ~= "" then string.lower(value) else nil
+  elseif cmd == "stay" or cmd == "off" then
+    mode = cmd
+    if cmd == "off" then
+      thrust_toward(vector.create(0, 0, 0))
+      gyro:set_override(nil)
+    end
+  elseif cmd == "distance" then
+    distance = math.clamp(tonumber(value) or distance, 2, 50)
+  elseif cmd == "height" then
+    height = math.clamp(tonumber(value) or height, -10, 50)
+  else
+    print("unknown command", arg)
+    return
+  end
+  print("drone:", mode, target_name or "", "distance", distance, "height", height)
+end
+
+function tick(dt)
+  if mode == "off" then return end
+  local g = grid.gravity
+  local gl = vector.magnitude(g)
+  local up = if gl > 0.01 then -g / gl else vector.create(0, 1, 0)
+  local p = if mode == "follow" then pick() else nil
+  if not p then
+    if mode == "follow" then
+      lost += dt
+      if lost > 1 and lost - dt <= 1 then print("no player in sensor range") end
+    end
+    -- Hover in place.
+    gyro:set_override(steer(up, nil))
+    thrust_toward(-grid.velocity * 1.5 - g)
+    return
+  end
+  if lost > 1 then print("following", p.name) end
+  lost = 0
+  -- Station point: `distance` from the player on our side, `height` above.
+  local to = p.position
+  local horiz = to - up * vector.dot(to, up)
+  local hd = vector.magnitude(horiz)
+  local away = if hd > 0.1 then -horiz / hd else vector.create(0, 0, 1)
+  local goal = to + away * distance + up * height
+  local want = goal * 0.9
+  local wl = vector.magnitude(want)
+  if wl > max_speed then want = want / wl * max_speed end
+  want += p.velocity
+  -- Never sink below 2 m above the ground.
+  if gl > 0.01 and grid.altitude < 2 then
+    want += up * (2 - grid.altitude) * 2
+  end
+  thrust_toward((want - grid.velocity) * 2 - g)
+  gyro:set_override(steer(up, to))
+end
+"#
+    )
+}
+
 pub fn all() -> Vec<(&'static str, String)> {
     vec![
         ("Hello", HELLO.to_string()),
@@ -412,6 +527,7 @@ pub fn all() -> Vec<(&'static str, String)> {
         ("Drawbridge", BRIDGE.to_string()),
         ("Carousel", CAROUSEL.to_string()),
         ("Shuttle autopilot", shuttle_autopilot()),
+        ("Follow drone", drone_follow()),
         ("Velocity hold", velocity_hold()),
         ("Hover", hover()),
     ]

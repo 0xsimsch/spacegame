@@ -82,6 +82,7 @@ impl World {
             BlockKind::Cockpit => BlockState::Cockpit { pilot: None },
             BlockKind::Gyro => BlockState::Gyro { override_: None },
             BlockKind::Door => BlockState::Door { open: false },
+            BlockKind::Sensor => BlockState::Sensor { range: SENSOR_DEFAULT_RANGE, detected: 0 },
             _ => BlockState::Plain,
         };
         let name = name.unwrap_or_else(|| self.default_name(grid, kind));
@@ -343,6 +344,9 @@ impl World {
                 let col = b.collider;
                 // An open door has no collider, so players and blocks pass through.
                 self.phys.colliders[col].set_enabled(!on);
+            }
+            (BlockState::Sensor { range, .. }, BlockProp::SensorRange(r)) if r.is_finite() => {
+                *range = (r as f64).clamp(1.0, SENSOR_MAX_RANGE)
             }
             (BlockState::Program(p), BlockProp::ScriptFrequency(f)) if [1, 10, 100].contains(&f) => p.frequency = f,
             _ => return Err("property does not apply to this block".into()),

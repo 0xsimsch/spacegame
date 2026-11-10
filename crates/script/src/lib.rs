@@ -45,6 +45,23 @@ pub struct BlockInfo {
     pub free: bool,
     pub gyro_override: Option<DVec3>,
     pub door_open: bool,
+    /// Sensors: detection range and the players inside it, nearest first.
+    pub sensor_range: f64,
+    pub sensed: Vec<SensedPlayer>,
+}
+
+/// A player seen by a sensor. Vectors are in the programmable block's grid frame.
+#[derive(Clone, Debug)]
+pub struct SensedPlayer {
+    pub id: u64,
+    pub name: String,
+    /// Position relative to the grid origin.
+    pub position: DVec3,
+    /// World velocity, rotated into the grid frame (compare with `grid.velocity`).
+    pub velocity: DVec3,
+    /// Distance from the sensor block.
+    pub distance: f64,
+    pub seated: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -86,6 +103,7 @@ pub enum Command {
     SetFree(BlockId, bool),
     GyroOverride(BlockId, Option<DVec3>),
     DoorOpen(BlockId, bool),
+    SensorRange(BlockId, f64),
 }
 
 #[derive(Debug, Default)]
@@ -135,6 +153,17 @@ fn kind_check(lua: &Lua, id: BlockId, want: BlockKind, what: &str) -> mlua::Resu
     Ok(())
 }
 
+fn player_table(lua: &Lua, p: &SensedPlayer) -> mlua::Result<mlua::Table> {
+    let t = lua.create_table()?;
+    t.set("id", p.id)?;
+    t.set("name", p.name.as_str())?;
+    t.set("position", vec_value(p.position))?;
+    t.set("velocity", vec_value(p.velocity))?;
+    t.set("distance", p.distance)?;
+    t.set("seated", p.seated)?;
+    Ok(t)
+}
+
 impl UserData for BlockRef {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
         m.add_method("set_override", |lua, this, v: Value| {
@@ -182,6 +211,15 @@ impl UserData for BlockRef {
             let open = with_block(lua, this.0, |b| b.door_open)?;
             push(lua, Command::DoorOpen(this.0, !open))
         });
+        m.add_method("set_range", |lua, this, r: f64| {
+            kind_check(lua, this.0, BlockKind::Sensor, "set_range")?;
+            push(lua, Command::SensorRange(this.0, r))
+        });
+        m.add_method("closest", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::Sensor, "closest")?;
+            let p = with_block(lua, this.0, |b| b.sensed.first().cloned())?;
+            p.map(|p| player_table(lua, &p)).transpose()
+        });
         m.add_method("set_target_angle", |lua, this, v: Option<f64>| {
             let k = with_block(lua, this.0, |b| b.kind)?;
             if !k.is_angular() {
@@ -209,6 +247,13 @@ impl UserData for BlockRef {
                         _ => Value::Number(b.thrust_override),
                     },
                     "is_open" => Value::Boolean(b.door_open),
+                    "range" => Value::Number(b.sensor_range),
+                    "detected" => Value::Boolean(!b.sensed.is_empty()),
+                    "count" => Value::Integer(b.sensed.len() as _),
+                    "players" if b.kind == BlockKind::Sensor => {
+                        let list = b.sensed.iter().map(|p| player_table(lua, p)).collect::<mlua::Result<Vec<_>>>()?;
+                        Value::Table(lua.create_sequence_from(list)?)
+                    }
                     "current_thrust" => Value::Number(b.thrust_current),
                     "position_m" | "extension" => Value::Number(b.piston_position),
                     "min" => Value::Number(if b.kind == BlockKind::Rotor {
@@ -481,6 +526,8 @@ mod tests {
                     free: false,
                     gyro_override: None,
                     door_open: false,
+                    sensor_range: 0.0,
+                    sensed: Vec::new(),
                 },
                 BlockInfo {
                     id: 3,
@@ -501,6 +548,8 @@ mod tests {
                     free: false,
                     gyro_override: None,
                     door_open: false,
+                    sensor_range: 0.0,
+                    sensed: Vec::new(),
                 },
             ],
             ..Default::default()
@@ -569,5 +618,40 @@ mod tests {
         let (host, _) = ScriptHost::new("function tick() grid:block('Arm'):set_override(1) end", "", &view()).unwrap();
         let r = host.tick(view());
         assert!(r.error.unwrap().contains("set_override called on a piston"));
+    }
+
+    #[test]
+    fn sensor_api() {
+        let mut v = view();
+        let mut sensor = v.blocks[0].clone();
+        sensor.id = 9;
+        sensor.kind = BlockKind::Sensor;
+        sensor.name = "Eye".into();
+        sensor.sensor_range = 50.0;
+        sensor.sensed = vec![SensedPlayer {
+            id: 4,
+            name: "bob".into(),
+            position: DVec3::new(0.0, 0.0, -10.0),
+            velocity: DVec3::X,
+            distance: 10.0,
+            seated: false,
+        }];
+        v.blocks.push(sensor);
+        let src = r#"
+            local s = grid:block("Eye")
+            function tick()
+              local p = s:closest()
+              print(s.detected, s.count, s.range, p.name, p.position.z, p.distance, #s.players)
+              s:set_range(80)
+            end
+        "#;
+        let (host, _) = ScriptHost::new(src, "", &v).unwrap();
+        let r = host.tick(v.clone());
+        assert_eq!(r.error, None);
+        assert_eq!(r.output, vec!["true\t1\t50\tbob\t-10\t10\t1"]);
+        assert_eq!(r.commands, vec![Command::SensorRange(9, 80.0)]);
+        v.blocks[2].sensed.clear();
+        let (host, _) = ScriptHost::new("function tick() print(grid:block('Eye'):closest(), grid:block('Eye').detected) end", "", &v).unwrap();
+        assert_eq!(host.tick(v).output, vec!["nil\tfalse"]);
     }
 }

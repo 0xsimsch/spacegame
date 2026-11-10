@@ -6,12 +6,12 @@ const HELP_TEXT := """[b]Controls[/b]
 WASD move, Space up, C down, Q/E roll (zero-g), mouse look
 J jetpack on/off (off = walk on planets, Space jumps)
 Z inertial dampeners, X cruise mode (raises speed cap to 5 km/s)
-G build mode: 1-9 or mouse wheel pick block (5 rotor, 8 gyroscope, 9 door), R/T rotate, B ship/station
+G build mode: 1-9, 0 or mouse wheel pick block (5 rotor, 8 gyroscope, 9 door, 0 sensor), R/T rotate, B ship/station
     LMB place (on a block, or in empty space to start a new grid), RMB remove
 V first/third person (third person: mouse wheel zooms, up to 300 m when seated)
 F use: sit in cockpit / open-close door / edit programmable block / control a block
 K control panel of the grid you look at (or are seated in)
-Enter chat & commands (/help, /tp moon, /spawn ship hover, /save)
+Enter chat & commands (/help, /tp moon, /spawn ship hover, /spawn drone, /save)
 F3 stats overlay, Esc menu
 
 [b]Scripting[/b] (Luau) - see the examples in the script editor:
@@ -23,6 +23,8 @@ F3 stats overlay, Esc menu
   piston/hinge/rotor:set_free(true) switches the motor off (joint moves only from forces), .free
   gyro:set_override(vector deg/s, grid frame) steers rotation, set_override(nil) = off
   door:open(), door:close(), door:toggle(), door:set_open(bool), .is_open
+  sensor.players (nearest first: .name .position .velocity .distance .seated), sensor:closest(),
+    .detected, .count, .range, sensor:set_range(m)  (1-500 m)
   grid.velocity, .angular_velocity, .gravity (grid frame vectors), .altitude, .planet, .mass, .speed
   me:set_frequency(1|10|100), print(...), storage (persistent string)
   function tick(dt) ... end, function on_message(arg) ... end
@@ -554,6 +556,11 @@ func _select_block(id: int) -> void:
 			panel_detail.add_child(gl)
 		"door":
 			_button("Open / Close", func(): game.set_door(id, not game.block_info(id)["door_open"]))
+		"sensor":
+			_slider("Range (m)", 1, 500, 1, b["sensor_range"], func(v): game.set_sensor_range(id, v))
+			var sl := Label.new()
+			sl.text = "Scripts read sensor.players / sensor:closest(). The eye glows red while it sees someone."
+			panel_detail.add_child(sl)
 		"cockpit":
 			var l := Label.new()
 			l.text = "Look at the cockpit and press F to sit."
@@ -602,6 +609,8 @@ func _update_value_label() -> void:
 			panel_value_label.text = "Angle: %.1f deg (unlimited)" % b["value"]
 		"door":
 			panel_value_label.text = "Open" if b["door_open"] else "Closed"
+		"sensor":
+			panel_value_label.text = "Detecting %d player(s) within %d m" % [int(b["value"]), int(b["sensor_range"])]
 		_:
 			panel_value_label.text = ""
 

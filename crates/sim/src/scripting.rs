@@ -2,7 +2,7 @@
 
 use crate::*;
 use rayon::prelude::*;
-use script::{BlockInfo, Command, GridInfo, GridView, RunResult, ScriptHost};
+use script::{BlockInfo, Command, GridInfo, GridView, RunResult, ScriptHost, SensedPlayer};
 use shared::blocks::*;
 use shared::protocol::BlockProp;
 use shared::orient;
@@ -39,6 +39,7 @@ impl World {
                 let (mut info_thr, mut thr_override, mut thr_out) = (0.0, 0.0, 0.0);
                 let (mut pp, mut pv, mut ha, mut hv, mut ht, mut free) = (0.0, 0.0, 0.0, 0.0, None, false);
                 let (mut gyro, mut door) = (None, false);
+                let (mut sensor_range, mut sensed) = (0.0, Vec::new());
                 match &b.state {
                     BlockState::Thruster(t) => {
                         info_thr = THRUSTER_MAX_FORCE;
@@ -58,6 +59,22 @@ impl World {
                     }
                     BlockState::Gyro { override_ } => gyro = *override_,
                     BlockState::Door { open } => door = *open,
+                    BlockState::Sensor { range, .. } => {
+                        sensor_range = *range;
+                        let at = op.transform_point(b.cell.as_dvec3());
+                        sensed = self
+                            .players_near(at, *range)
+                            .into_iter()
+                            .map(|(id, pos, vel, distance)| SensedPlayer {
+                                id: id as u64,
+                                name: self.players[&id].name.clone(),
+                                position: gp.inverse_transform_point(pos),
+                                velocity: inv * vel,
+                                distance,
+                                seated: self.players[&id].seat.is_some(),
+                            })
+                            .collect();
+                    }
                     _ => {}
                 }
                 blocks.push(BlockInfo {
@@ -79,6 +96,8 @@ impl World {
                     free,
                     gyro_override: gyro,
                     door_open: door,
+                    sensor_range,
+                    sensed,
                 });
             }
         }
@@ -170,7 +189,8 @@ impl World {
                 | Command::HingeTarget(id, _)
                 | Command::SetFree(id, _)
                 | Command::GyroOverride(id, _)
-                | Command::DoorOpen(id, _) => Some(*id),
+                | Command::DoorOpen(id, _)
+                | Command::SensorRange(id, _) => Some(*id),
                 _ => None,
             };
             if let Some(t) = target {
@@ -196,6 +216,9 @@ impl World {
                 }
                 Command::DoorOpen(id, on) => {
                     let _ = self.set_block_prop(id, BlockProp::DoorOpen(on));
+                }
+                Command::SensorRange(id, r) => {
+                    let _ = self.set_block_prop(id, BlockProp::SensorRange(r as f32));
                 }
                 Command::SetFree(id, on) => {
                     let _ = self.set_block_prop(id, BlockProp::Free(on));

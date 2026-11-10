@@ -43,6 +43,7 @@ pub struct Visuals {
     pub ghost_bad: Gd<StandardMaterial3D>,
     pub player: Gd<StandardMaterial3D>,
     pub visor: Gd<StandardMaterial3D>,
+    pub sensor_on: Gd<StandardMaterial3D>,
 }
 
 impl Visuals {
@@ -82,6 +83,7 @@ impl Visuals {
             BlockKind::RotorTop,
             BlockKind::Gyro,
             BlockKind::Door,
+            BlockKind::Sensor,
         ];
         let block_mats = all.iter().map(|k| (*k, material(k.color(), 0.0, 1.0))).collect();
         Self {
@@ -100,6 +102,7 @@ impl Visuals {
             ghost_bad: material([1.0, 0.3, 0.2], 0.0, 0.35),
             player: material([0.85, 0.45, 0.15], 0.0, 1.0),
             visor: material([0.1, 0.15, 0.3], 0.5, 1.0),
+            sensor_on: material([1.0, 0.25, 0.15], 5.0, 1.0),
         }
     }
 }
