@@ -77,7 +77,11 @@ impl World {
             me: pb,
             me_name: me.name.clone(),
             tick: self.tick,
-            dt: TICK_DT,
+            // Time since the previous run (scripts may run every 1/10/100 ticks).
+            dt: TICK_DT * match &me.state {
+                BlockState::Program(p) => p.frequency.max(1) as f64,
+                _ => 1.0,
+            },
             grid,
             blocks,
         })

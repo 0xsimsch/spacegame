@@ -54,10 +54,17 @@ func _run() -> void:
 	game.debug_set_look(-15.0, -12.0)
 	await _wait(0.5)
 	await _shot("02_look_around")
+	# Demo park: elevator, crane, robot arm, drawbridge (give them time to move).
+	await _wait(4.0)
+	for v in [[-60.0, 10.0, "02a_left"], [-25.0, 10.0, "02b_left_center"], [5.0, 8.0, "02c_center"], [35.0, 10.0, "02d_right"]]:
+		game.debug_set_look(v[0], v[1])
+		await _wait(0.6)
+		await _shot(v[2])
 
 	# Build: new grid in front, then a block on it.
 	var before: int = game.debug_counts()["grids"]
-	game.debug_set_look(90.0, -20.0)
+	# Face away from the demo park so the ray hits nothing.
+	game.debug_set_look(180.0, -10.0)
 	game.debug_key("G")
 	await _wait(0.2)
 	game.debug_click(false)

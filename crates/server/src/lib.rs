@@ -541,7 +541,7 @@ impl GameServer {
                     client,
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
-                     /spawn <ship|arm|pad> [hover|velocity] - spawn a prefab in front of you\n\
+                     /spawn <ship|arm|pad|elevator|crane|robot|bridge> [hover|velocity] - spawn a prefab in front of you\n\
                      /save - save the world\n/where - show your position",
                 );
                 Ok(())
@@ -576,7 +576,8 @@ impl GameServer {
                 let p = self.world.players[&pid].input.look;
                 let pos = self.world.player_pos(pid).unwrap();
                 let fwd = p * DVec3::NEG_Z;
-                let at = pos + fwd * 8.0;
+                let dist = if matches!(what, "ship" | "pad" | "arm") { 8.0 } else { 15.0 };
+                let at = pos + fwd * dist;
                 let rot = prefabs::surface_orientation(at);
                 let g = gravity_at(at);
                 // On a planet put it on the surface below the target point.
@@ -584,6 +585,7 @@ impl GameServer {
                     let body = &shared::solar::BODIES[b];
                     let up = (at - body.position).normalize();
                     let ground = body.position + up * (body.radius + if what == "ship" { 1.6 } else { 0.6 });
+                    // Big constructs need some room in front of the player.
                     if g.altitude < 20.0 { ground } else { at }
                 } else {
                     at
@@ -616,6 +618,11 @@ fn seed_world(world: &mut World) {
     world.spawn_prefab("pad", spawn + rot * (DVec3::new(0.0, 0.6, -15.0)), rot, None);
     world.spawn_prefab("ship", spawn + rot * DVec3::new(0.0, 2.1, -15.0), rot, None);
     world.spawn_prefab("arm", spawn + rot * DVec3::new(12.0, 0.6, -10.0), rot, None);
+    // Demo park of mechanical constructs, each driven by its own script.
+    world.spawn_prefab("elevator", spawn + rot * DVec3::new(-12.0, 0.6, -12.0), rot, None);
+    world.spawn_prefab("crane", spawn + rot * DVec3::new(-16.0, 0.6, -32.0), rot, None);
+    world.spawn_prefab("robot", spawn + rot * DVec3::new(14.0, 0.6, -28.0), rot, None);
+    world.spawn_prefab("bridge", spawn + rot * DVec3::new(0.0, 0.6, -42.0), rot, None);
 }
 
 /// 20 hovering ships + 30 sweeping arms = 50 scripts, all near the Earth spawn.

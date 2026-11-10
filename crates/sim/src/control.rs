@@ -193,14 +193,35 @@ impl World {
                 }
             }
         }
+        let mut changed = Vec::new();
         for (j, axis, vel) in updates {
-            if let Some(joint) = self.phys.impulse_joints.get_mut(j, false) {
-                let cur = joint.data.motor(axis).map(|m| m.target_vel).unwrap_or(f64::NAN);
-                if cur != vel {
-                    joint.data.set_motor_velocity(axis, vel, 1000.0);
-                    let (b1, b2) = (joint.body1(), joint.body2());
-                    self.phys.bodies[b1].wake_up(true);
-                    self.phys.bodies[b2].wake_up(true);
+            let data = match j {
+                JointRef::Impulse(h) => self.phys.impulse_joints.get_mut(h, true).map(|j| &mut j.data),
+                JointRef::Multi(h) => self
+                    .phys
+                    .multibody_joints
+                    .get_mut(h)
+                    .and_then(|(mb, link)| mb.link_mut(link))
+                    .map(|l| &mut l.joint.data),
+            };
+            let Some(data) = data else { continue };
+            let cur = data.motor(axis).map(|m| m.target_vel).unwrap_or(f64::NAN);
+            if cur != vel {
+                data.set_motor_velocity(axis, vel, 1000.0);
+                changed.push(j);
+            }
+        }
+        // Wake both sides of joints whose motor changed.
+        for g in self.grids.values() {
+            for b in g.blocks.values() {
+                if let BlockState::Mech(Mech { joint: Some(j), top: Some(top), .. }) = &b.state {
+                    if changed.iter().any(|c| same_joint(*c, *j)) {
+                        let tb = self.grids.get(top).map(|t| t.body);
+                        self.phys.bodies[g.body].wake_up(true);
+                        if let Some(tb) = tb {
+                            self.phys.bodies[tb].wake_up(true);
+                        }
+                    }
                 }
             }
         }
@@ -231,5 +252,13 @@ impl World {
                 m.value = v;
             }
         }
+    }
+}
+
+fn same_joint(a: JointRef, b: JointRef) -> bool {
+    match (a, b) {
+        (JointRef::Multi(x), JointRef::Multi(y)) => x == y,
+        (JointRef::Impulse(x), JointRef::Impulse(y)) => x == y,
+        _ => false,
     }
 }

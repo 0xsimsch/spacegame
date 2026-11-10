@@ -235,6 +235,9 @@ fn save_and_load_roundtrip() {
     run(&mut w, 2.0);
     let piston = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == "Arm Piston").unwrap().id;
     let before = mech_value(&w, piston);
+    let hinge = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == "Elbow Hinge").unwrap().id;
+    let hinge_before = mech_value(&w, hinge);
+    assert!(hinge_before.abs() > 5.0, "hinge should be deflected for this test: {hinge_before}");
     let blocks = w.total_blocks();
     let bytes = w.save_bytes();
     let mut w2 = World::load_bytes(&bytes).unwrap();
@@ -242,6 +245,11 @@ fn save_and_load_roundtrip() {
     assert_eq!(w2.grids.len(), w.grids.len());
     assert!((mech_value(&w2, piston) - before).abs() < 0.05);
     assert_eq!(w2.program_count(), 1);
+    // No snapping back to the rest pose after the first steps.
+    run(&mut w2, 0.1);
+    assert!((mech_value(&w2, piston) - before).abs() < 0.3, "joint kept its extension after load");
+    let h = mech_value(&w2, hinge);
+    assert!((h - hinge_before).abs() < 6.0, "hinge kept its angle after load: {hinge_before} -> {h}");
     // Keeps running after load.
     run(&mut w2, 2.0);
     assert!((mech_value(&w2, piston) - before).abs() > 0.5, "still animating");
@@ -267,3 +275,49 @@ fn hinge_holds_in_gravity() {
     let a = mech_value(&w, hinge);
     assert!((a - 30.0).abs() < 3.0, "{a}");
 }
+
+/// Every demo construct must move through its range without errors or explosions.
+#[test]
+fn demo_constructs_work() {
+    // (prefab, [(mech name, expected min below, expected max above)])
+    let cases: [(&str, &[(&str, f64, f64)]); 4] = [
+        ("elevator", &[("Lift 1", 0.3, 4.7), ("Lift 2", 0.3, 4.7), ("Lift 3", 0.3, 4.7)]),
+        ("crane", &[("Boom Hinge", -50.0, -10.0), ("Boom Piston", 1.0, 4.0), ("Hook Hinge", -50.0, -10.0)]),
+        ("robot", &[("Shoulder", -25.0, 25.0), ("Reach Piston", 1.0, 4.0), ("Elbow", -45.0, 45.0), ("Wrist", -60.0, 60.0)]),
+        ("bridge", &[("Bridge Hinge", 5.0, 70.0)]),
+    ];
+    for (name, mechs) in cases {
+        let mut w = World::new();
+        let pos = above("Earth", 0.6);
+        let base = w.spawn_prefab(name, pos, prefabs::surface_orientation(pos), None).unwrap();
+        let find = |w: &World, n: &str| w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == n).map(|b| b.id).unwrap();
+        let pb = w.grids[&base].blocks.values().find(|b| b.kind == BlockKind::Programmable).unwrap().id;
+        assert_eq!(w.script_info(pb).unwrap().error, None, "{name}: script error at start");
+        let ids: Vec<BlockId> = mechs.iter().map(|(n, _, _)| find(&w, n)).collect();
+        let mut lo = vec![f64::MAX; ids.len()];
+        let mut hi = vec![f64::MIN; ids.len()];
+        let mut max_dist: f64 = 0.0;
+        for _ in 0..(45 * 60) {
+            w.step();
+            for (i, id) in ids.iter().enumerate() {
+                let v = mech_value(&w, *id);
+                assert!(v.is_finite(), "{name}: NaN");
+                lo[i] = lo[i].min(v);
+                hi[i] = hi[i].max(v);
+            }
+            for g in w.grids.values() {
+                let d = (w.phys.bodies[g.body].translation() - pos).length();
+                max_dist = max_dist.max(d);
+            }
+        }
+        assert_eq!(w.script_info(pb).unwrap().error, None, "{name}: script error");
+        assert!(max_dist < 30.0, "{name}: a part flew {max_dist} m away");
+        for (i, (n, want_lo, want_hi)) in mechs.iter().enumerate() {
+            eprintln!("{name}/{n}: {:.2} .. {:.2}", lo[i], hi[i]);
+            // Nothing may slam into the hinge limits (that means it toppled).
+            assert!(lo[i] > -85.0 && hi[i] < 85.0, "{name}/{n} hit its limits: {:.1}..{:.1}", lo[i], hi[i]);
+            assert!(lo[i] < *want_lo && hi[i] > *want_hi, "{name}/{n} range {:.2}..{:.2}, wanted below {want_lo} and above {want_hi}", lo[i], hi[i]);
+        }
+    }
+}
+

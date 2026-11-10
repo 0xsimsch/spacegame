@@ -149,7 +149,26 @@ impl World {
                 .into()
         };
         let (b1, b2) = (g.body, tg.body);
-        let handle = self.phys.insert_impulse_joint(b1, b2, joint);
+        let is_piston = b.kind == BlockKind::Piston;
+        let initial = m.value;
+        let handle = match self.phys.insert_multibody_joint(b1, b2, joint) {
+            Some(h) => {
+                // A new multibody joint starts at coordinate 0; restore the
+                // current extension/angle (matters when loading a save).
+                if initial.abs() > 1e-9 {
+                    let disp = if is_piston { initial } else { initial.to_radians() };
+                    let phys = &mut self.phys;
+                    if let Some((mb, link)) = phys.multibody_joints.get_mut(h) {
+                        if let Some(l) = mb.link_mut(link) {
+                            l.joint.apply_displacement(&[disp]);
+                        }
+                        mb.forward_kinematics(&phys.bodies, true);
+                    }
+                }
+                JointRef::Multi(h)
+            }
+            None => JointRef::Impulse(self.phys.insert_impulse_joint(b1, b2, joint)),
+        };
         if let Some(BlockState::Mech(m)) = self.block_mut(mech).map(|b| &mut b.state) {
             m.joint = Some(handle);
         }
@@ -163,8 +182,12 @@ impl World {
         self.phys.remove_collider(block.collider);
         match &block.state {
             BlockState::Mech(m) => {
-                if let Some(j) = m.joint {
-                    self.phys.remove_impulse_joint(j);
+                match m.joint {
+                    Some(JointRef::Multi(j)) => self.phys.remove_multibody_joint(j),
+                    Some(JointRef::Impulse(j)) => {
+                        self.phys.remove_impulse_joint(j);
+                    }
+                    None => {}
                 }
                 if let Some(top) = m.top.and_then(|t| self.grids.get_mut(&t)) {
                     top.mount = None;

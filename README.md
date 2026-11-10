@@ -21,7 +21,7 @@ cargo run --release -p server --bin bot -- --addr 127.0.0.1:47800 --count 4 --se
 Client command-line options (after `--`): `--host`, `--join HOST:PORT`, `--name N`,
 `--port P`, `--autotest [--shots DIR] [--expect-players N]`.
 
-Tests: `cargo test --workspace` (22 tests, including the three acceptance scripts) and
+Tests: `cargo test --workspace` (24 tests, including the three acceptance scripts) and
 `godot --headless --path godot -- --autotest --host --port 47891` (end-to-end client smoke test).
 
 ## Controls
@@ -33,8 +33,25 @@ Tests: `cargo test --workspace` (22 tests, including the three acceptance script
 | G | build mode: 1-6 / wheel pick block, R/T rotate, B ship/station, LMB place, RMB remove |
 | F | sit in cockpit / edit programmable block / control panel of a block; F again to stand up |
 | K | control panel of the grid you look at or sit in |
-| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn arm`, `/save`, `/where` |
+| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <arm\|elevator\|crane\|robot\|bridge>`, `/save`, `/where` |
 | F1 / F3 / Esc | help, stats overlay, menu |
+
+## Demo park
+
+The default world, created when there is no save, places these next to the spawn. Each one is
+driven by its own programmable block; open it with F to read or change the script.
+
+| Construct | Mechanics | Script |
+|---|---|---|
+| Arm | piston → hinge → arm | sweeps in/out and ±60° |
+| Elevator | 3 stacked pistons carrying a platform (15 m) | extends them one after another, pauses, retracts. Run with a number to set the speed |
+| Crane | tower → luffing hinge → boom → telescoping piston → hook hinge | raises the boom and telescopes it; the hook counter-rotates to hang straight down |
+| Robot arm | shoulder hinge → piston → elbow hinge (other axis) → wrist hinge → gripper | phase-shifted sine "dance". Run with a number to set the speed |
+| Drawbridge | wall → hinge → 3×6 deck | opens/closes every 8 s. Run with `open`, `close` or `auto` |
+
+Mechanical joints are Rapier multibody (reduced-coordinate) joints, so long chains stay stiff.
+To regenerate the demo world, delete `world.save`: in `~/.local/share/godot/app_userdata/Spacegame Prototype/`
+for Host & Play, or in the server's working directory for the dedicated server.
 
 ## Scripting API (Luau, sandboxed)
 

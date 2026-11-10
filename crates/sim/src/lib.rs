@@ -38,10 +38,19 @@ pub struct Thruster {
     pub output: f64,
 }
 
+/// Mechanical joints are multibody (reduced-coordinate) joints, which stay
+/// stiff along long chains; impulse joints are the fallback when a multibody
+/// joint is impossible (e.g. it would close a loop).
+#[derive(Clone, Copy, Debug)]
+pub enum JointRef {
+    Multi(MultibodyJointHandle),
+    Impulse(ImpulseJointHandle),
+}
+
 #[derive(Debug)]
 pub struct Mech {
     pub top: Option<GridId>,
-    pub joint: Option<ImpulseJointHandle>,
+    pub joint: Option<JointRef>,
     /// Piston: m/s. Hinge: deg/s.
     pub velocity: f64,
     /// Hinge only: target angle in degrees (overrides `velocity`).
@@ -171,6 +180,7 @@ impl World {
         let mut phys = PhysicsWorld::new();
         phys.gravity = DVec3::ZERO;
         phys.integration_parameters.dt = TICK_DT;
+        phys.integration_parameters.num_solver_iterations = 8;
         for (i, b) in shared::solar::BODIES.iter().enumerate() {
             let body = RigidBodyBuilder::fixed()
                 .translation(b.position)

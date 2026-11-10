@@ -43,6 +43,116 @@ function on_message(arg)
 end
 "#;
 
+/// Three stacked pistons extend one after another, pause, then retract.
+pub const ELEVATOR: &str = r#"-- Elevator: three stacked pistons extend one after another, pause, retract.
+local lifts = { grid:block("Lift 1"), grid:block("Lift 2"), grid:block("Lift 3") }
+assert(lifts[1] and lifts[2] and lifts[3], "needs pistons 'Lift 1'..'Lift 3'")
+local speed = 2
+local stage, dir, wait = 1, 1, 2
+me:set_frequency(10)
+
+function tick(dt)
+  if wait > 0 then
+    wait -= dt
+    return
+  end
+  local p = lifts[stage]
+  local done = if dir > 0 then p.extension >= p.max - 0.05 else p.extension <= p.min + 0.05
+  if not done then
+    p:set_velocity(speed * dir)
+    return
+  end
+  p:set_velocity(0)
+  if dir > 0 and stage < #lifts then
+    stage += 1
+  elseif dir < 0 and stage > 1 then
+    stage -= 1
+  else
+    dir = -dir
+    wait = 3
+    print(if dir < 0 then "top reached" else "bottom reached")
+  end
+end
+
+function on_message(arg)
+  speed = math.clamp(tonumber(arg) or speed, 0.2, 2)
+  print("speed", speed)
+end
+"#;
+
+/// A luffing crane whose hook hinge counter-rotates to hang straight down.
+pub const CRANE: &str = r#"-- Crane: raise/lower the boom, telescope it, and keep the hook hanging straight down.
+local luff = grid:block("Boom Hinge")
+local boom = grid:block("Boom Piston")
+local hook = grid:block("Hook Hinge")
+assert(luff and boom and hook, "needs 'Boom Hinge', 'Boom Piston' and 'Hook Hinge'")
+local t = 0
+
+function tick(dt)
+  t += dt
+  -- Negative angles lift the boom (right-hand rule around the hinge axis).
+  luff:set_target_angle(-30 - 25 * math.sin(t * 0.25))
+  local want = 2.5 + 2.4 * math.sin(t * 0.18)
+  boom:set_velocity(math.clamp((want - boom.extension) * 2, -2, 2))
+  -- The hook hinge turns around the opposite axis, so matching the boom
+  -- angle cancels its tilt.
+  hook:set_target_angle(luff.angle)
+end
+
+function on_message(arg)
+  print(string.format("boom %.1f deg, %.2f m out, hook %.1f deg", luff.angle, boom.extension, hook.angle))
+end
+"#;
+
+/// A 4-joint robot arm following phase-shifted sine waves.
+pub const ROBOT: &str = r#"-- Robot arm: shoulder, telescoping upper arm, elbow (other axis) and wrist.
+local shoulder = grid:block("Shoulder")
+local reach = grid:block("Reach Piston")
+local elbow = grid:block("Elbow")
+local wrist = grid:block("Wrist")
+assert(shoulder and reach and elbow and wrist, "needs Shoulder, Reach Piston, Elbow, Wrist")
+local t = 0
+local speed = 1
+
+function tick(dt)
+  t += dt * speed
+  shoulder:set_target_angle(30 * math.sin(t * 0.6))
+  elbow:set_target_angle(55 * math.sin(t * 0.45 + 1))
+  wrist:set_target_angle(70 * math.sin(t * 0.9 + 2))
+  local want = 2.5 + 2 * math.sin(t * 0.5)
+  reach:set_velocity(math.clamp((want - reach.extension) * 2, -2, 2))
+end
+
+function on_message(arg)
+  speed = math.clamp(tonumber(arg) or 1, 0, 3)
+  print("dance speed", speed)
+end
+"#;
+
+/// A drawbridge that opens and closes on a timer or on command.
+pub const BRIDGE: &str = r#"-- Drawbridge: cycles every 8 s. "Run" with "open", "close" or "auto".
+local hinge = grid:block("Bridge Hinge")
+assert(hinge, "needs a hinge named 'Bridge Hinge'")
+local open, auto, timer = false, true, 0
+me:set_frequency(10)
+
+function on_message(arg)
+  if arg == "open" then open, auto = true, false
+  elseif arg == "close" then open, auto = false, false
+  else auto = true end
+  print("bridge:", if open then "open" else "closed", if auto then "(auto)" else "(manual)")
+end
+
+function tick(dt)
+  timer += dt
+  if auto and timer > 8 then
+    timer = 0
+    open = not open
+  end
+  hinge:set_target_angle(if open then 75 else 0)
+end
+"#;
+
 /// Shared thruster-allocation helper used by the flight scripts.
 const THRUST_HELPER: &str = r#"
 -- Fire thrusters so the grid accelerates by `accel` (grid frame, m/s^2).
@@ -123,6 +233,10 @@ pub fn all() -> Vec<(&'static str, String)> {
     vec![
         ("Hello", HELLO.to_string()),
         ("Arm sweep", ARM_SWEEP.to_string()),
+        ("Elevator", ELEVATOR.to_string()),
+        ("Crane", CRANE.to_string()),
+        ("Robot arm", ROBOT.to_string()),
+        ("Drawbridge", BRIDGE.to_string()),
         ("Velocity hold", velocity_hold()),
         ("Hover", hover()),
     ]

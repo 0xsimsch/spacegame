@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum SavedState {
     Plain,
     Thruster { override_: f64 },
-    Mech { top: Option<GridId>, velocity: f64, target: Option<f64> },
+    Mech { top: Option<GridId>, velocity: f64, target: Option<f64>, value: f64 },
     Program { source: String, storage: String },
     Cockpit,
 }
@@ -45,7 +45,7 @@ pub struct SaveData {
     pub players: Vec<(String, DVec3)>,
 }
 
-const SAVE_VERSION: u32 = 1;
+const SAVE_VERSION: u32 = 2;
 
 impl World {
     pub fn save(&self) -> SaveData {
@@ -70,7 +70,7 @@ impl World {
                         state: match &b.state {
                             BlockState::Plain => SavedState::Plain,
                             BlockState::Thruster(t) => SavedState::Thruster { override_: t.override_ },
-                            BlockState::Mech(m) => SavedState::Mech { top: m.top, velocity: m.velocity, target: m.target },
+                            BlockState::Mech(m) => SavedState::Mech { top: m.top, velocity: m.velocity, target: m.target, value: m.value },
                             BlockState::Program(p) => SavedState::Program { source: p.source.clone(), storage: p.storage.clone() },
                             BlockState::Cockpit { .. } => SavedState::Cockpit,
                         },
@@ -129,8 +129,9 @@ impl World {
                 let blk = w.block_mut(b.id).unwrap();
                 match (&b.state, &mut blk.state) {
                     (SavedState::Thruster { override_ }, BlockState::Thruster(t)) => t.override_ = *override_,
-                    (SavedState::Mech { top, velocity, target }, BlockState::Mech(m)) => {
+                    (SavedState::Mech { top, velocity, target, value }, BlockState::Mech(m)) => {
                         m.top = *top;
+                        m.value = *value;
                         m.velocity = *velocity;
                         m.target = *target;
                         mechs.push(b.id);

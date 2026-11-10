@@ -36,7 +36,7 @@ pub const PISTON_MAX_FORCE: f64 = 200_000.0;
 /// Hinge angle limits in degrees.
 pub const HINGE_LIMIT_DEG: f64 = 90.0;
 pub const HINGE_MAX_SPEED_DEG: f64 = 90.0;
-pub const HINGE_MAX_TORQUE: f64 = 200_000.0;
+pub const HINGE_MAX_TORQUE: f64 = 1_500_000.0;
 
 impl BlockKind {
     pub fn mass(self) -> f64 {
@@ -44,9 +44,9 @@ impl BlockKind {
             BlockKind::Armor => 100.0,
             BlockKind::Thruster => 150.0,
             BlockKind::Piston => 200.0,
-            BlockKind::PistonTop => 50.0,
+            BlockKind::PistonTop => 150.0,
             BlockKind::Hinge => 200.0,
-            BlockKind::HingeTop => 50.0,
+            BlockKind::HingeTop => 150.0,
             BlockKind::Programmable => 150.0,
             BlockKind::Cockpit => 150.0,
         }

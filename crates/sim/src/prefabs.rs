@@ -1,10 +1,11 @@
 //! Ready-made constructions for testing and demos (`/spawn <name>`).
 
 use crate::*;
+use shared::BlockId;
 use shared::examples;
 use shared::orient::from_axes;
 
-pub const NAMES: [&str; 3] = ["ship", "arm", "pad"];
+pub const NAMES: [&str; 7] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge"];
 
 fn rot(fwd: IVec3, up: IVec3) -> u8 {
     from_axes(fwd, up).expect("valid axes")
@@ -18,6 +19,10 @@ impl World {
             "ship" => Some(self.spawn_ship(pos, orientation, script)),
             "arm" => Some(self.spawn_arm(pos, orientation)),
             "pad" => Some(self.spawn_pad(pos, orientation)),
+            "elevator" => Some(self.spawn_elevator(pos, orientation)),
+            "crane" => Some(self.spawn_crane(pos, orientation)),
+            "robot" => Some(self.spawn_robot(pos, orientation)),
+            "bridge" => Some(self.spawn_bridge(pos, orientation)),
             _ => None,
         }
     }
@@ -74,6 +79,98 @@ impl World {
             self.insert_block(arm, IVec3::new(0, y, 0), ident, BlockKind::Armor, None, None, false);
         }
         let _ = self.upload_script(pb, examples::ARM_SWEEP);
+        g
+    }
+
+    /// The head sub-grid created for a piston/hinge.
+    fn head_of(&self, mech: BlockId) -> GridId {
+        match &self.block(mech).expect("mech exists").1.state {
+            BlockState::Mech(m) => m.top.expect("mech has a head"),
+            _ => panic!("not a mech block"),
+        }
+    }
+
+    fn armor(&mut self, g: GridId, cells: impl IntoIterator<Item = IVec3>) {
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        for c in cells {
+            self.insert_block(g, c, ident, BlockKind::Armor, None, None, false);
+        }
+    }
+
+    fn mech(&mut self, g: GridId, cell: IVec3, fwd: IVec3, up: IVec3, kind: BlockKind, name: &str) -> (BlockId, GridId) {
+        let id = self.insert_block(g, cell, rot(fwd, up), kind, None, Some(name.into()), true);
+        (id, self.head_of(id))
+    }
+
+    fn base_with_controller(&mut self, pos: DVec3, orientation: DQuat, half: i32, name: &str, script: &str) -> GridId {
+        let g = self.create_grid(pos, orientation, true, None);
+        self.armor(g, (-half..=half).flat_map(|x| (-half..=half).map(move |z| IVec3::new(x, 0, z))));
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        let pb = self.insert_block(g, IVec3::new(half + 1, 0, 0), ident, BlockKind::Programmable, None, Some(name.into()), false);
+        // Scripts run after the whole construct exists (see `finish_controller`).
+        let _ = script;
+        let _ = pb;
+        g
+    }
+
+    fn finish_controller(&mut self, base: GridId, script: &str) {
+        let pb = self.grids[&base].blocks.values().find(|b| b.kind == BlockKind::Programmable).map(|b| b.id);
+        if let Some(pb) = pb {
+            let _ = self.upload_script(pb, script);
+        }
+    }
+
+    /// Three pistons stacked on top of each other carrying a platform (15 m of travel).
+    fn spawn_elevator(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.base_with_controller(pos, orientation, 1, "Elevator Controller", examples::ELEVATOR);
+        let (_, h1) = self.mech(g, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Piston, "Lift 1");
+        let (_, h2) = self.mech(h1, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Piston, "Lift 2");
+        let (_, h3) = self.mech(h2, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Piston, "Lift 3");
+        self.armor(h3, (-1..=1).flat_map(|x| (-1..=1).map(move |z| IVec3::new(x, 1, z))));
+        self.armor(h3, [IVec3::new(-1, 2, -1), IVec3::new(1, 2, -1), IVec3::new(-1, 2, 1), IVec3::new(1, 2, 1)]);
+        self.finish_controller(g, examples::ELEVATOR);
+        g
+    }
+
+    /// A tower with a luffing, telescoping boom and a self-levelling hook.
+    fn spawn_crane(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.base_with_controller(pos, orientation, 1, "Crane Controller", examples::CRANE);
+        self.armor(g, (1..=4).map(|y| IVec3::new(0, y, 0)));
+        let (_, boom) = self.mech(g, IVec3::new(0, 5, 0), IVec3::Y, IVec3::Z, BlockKind::Hinge, "Boom Hinge");
+        // Boom along +Z from the hinge head, then a telescoping section.
+        self.armor(boom, [IVec3::new(0, 0, 1), IVec3::new(0, 0, 2)]);
+        let (_, tele) = self.mech(boom, IVec3::new(0, 0, 3), IVec3::Z, IVec3::Y, BlockKind::Piston, "Boom Piston");
+        self.armor(tele, [IVec3::new(0, 0, 1)]);
+        let (_, hook) = self.mech(tele, IVec3::new(0, -1, 1), IVec3::NEG_Y, IVec3::Z, BlockKind::Hinge, "Hook Hinge");
+        self.armor(hook, [IVec3::new(0, -1, 0), IVec3::new(0, -2, 0), IVec3::new(1, -2, 0), IVec3::new(-1, -2, 0)]);
+        self.finish_controller(g, examples::CRANE);
+        g
+    }
+
+    /// Shoulder hinge -> telescoping upper arm -> elbow (perpendicular axis) -> wrist -> gripper.
+    fn spawn_robot(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.base_with_controller(pos, orientation, 1, "Robot Controller", examples::ROBOT);
+        let (_, upper) = self.mech(g, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Hinge, "Shoulder");
+        let (_, reach) = self.mech(upper, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Piston, "Reach Piston");
+        // Elbow with up = X turns around Z, perpendicular to the shoulder.
+        let (_, fore) = self.mech(reach, IVec3::Y, IVec3::Y, IVec3::X, BlockKind::Hinge, "Elbow");
+        self.armor(fore, [IVec3::new(0, 1, 0), IVec3::new(0, 2, 0)]);
+        let (_, hand) = self.mech(fore, IVec3::new(0, 3, 0), IVec3::Y, IVec3::Z, BlockKind::Hinge, "Wrist");
+        self.armor(hand, [IVec3::new(0, 1, 0), IVec3::new(-1, 1, 0), IVec3::new(1, 1, 0), IVec3::new(-1, 2, 0), IVec3::new(1, 2, 0)]);
+        self.finish_controller(g, examples::ROBOT);
+        g
+    }
+
+    /// A wall with a 3x6 drawbridge on a hinge.
+    fn spawn_bridge(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.create_grid(pos, orientation, true, None);
+        self.armor(g, (-2..=2).flat_map(|x| (0..=2).map(move |y| IVec3::new(x, y, 0))));
+        self.armor(g, [IVec3::new(-2, 3, 0), IVec3::new(2, 3, 0), IVec3::new(-1, 3, 0), IVec3::new(1, 3, 0)]);
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        self.insert_block(g, IVec3::new(3, 0, 0), ident, BlockKind::Programmable, None, Some("Bridge Controller".into()), false);
+        let (_, plate) = self.mech(g, IVec3::new(0, 3, 0), IVec3::Z, IVec3::Y, BlockKind::Hinge, "Bridge Hinge");
+        self.armor(plate, (-1..=1).flat_map(|x| (0..6).map(move |z| IVec3::new(x, 0, z))).filter(|c| *c != IVec3::ZERO));
+        self.finish_controller(g, examples::BRIDGE);
         g
     }
 
