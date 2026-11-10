@@ -6,12 +6,14 @@ const HELP_TEXT := """[b]Controls[/b]
 WASD move, Space up, C down, Q/E roll (zero-g), mouse look
 J jetpack on/off (off = walk on planets, Space jumps)
 Z inertial dampeners, X cruise mode (raises speed cap to 5 km/s)
-G build mode: 1-9, 0, - or mouse wheel pick block (5 rotor, 8 gyro, 9 door, 0 sensor, - large 2x2x2 thruster), R/T rotate, B ship/station
+G build mode: 1-9, 0, Shift+1-4 or mouse wheel pick block (5 rotor, 8 gyro, 9 door, 0 sensor,
+    Shift+1 large 2x2x2 thruster, Shift+2 landing gear, Shift+3 merge block, Shift+4 connector), R/T rotate, B ship/station
     LMB place (on a block, or in empty space to start a new grid), RMB remove
 V first/third person (third person: mouse wheel zooms, up to 300 m when seated)
-F use: sit in cockpit / open-close door / edit programmable block / control a block
+F use: sit in cockpit / open-close door / lock landing gear or connector / edit programmable block / control a block
+P (seated) lock or unlock all landing gear and connectors of your ship
 K control panel of the grid you look at (or are seated in)
-Enter chat & commands (/help, /tp moon, /spawn ship hover, /spawn drone, /spawn cruiser, /save)
+Enter chat & commands (/help, /tp moon, /spawn ship hover, /spawn drone, /spawn cruiser, /spawn tug, /spawn dock, /save)
 F3 stats overlay, Esc menu
 
 [b]Scripting[/b] (Luau) - see the examples in the script editor:
@@ -23,6 +25,9 @@ F3 stats overlay, Esc menu
   piston/hinge/rotor:set_free(true) switches the motor off (joint moves only from forces), .free
   gyro:set_override(vector deg/s, grid frame) steers rotation, set_override(nil) = off
   door:open(), door:close(), door:toggle(), door:set_open(bool), .is_open
+  landing_gear:lock(), :unlock(), :set_auto_lock(bool), .locked, .ready, .auto_lock
+  connector:connect(), :disconnect(), :set_auto_lock(bool), .connected, .ready
+  merge:set_enabled(bool), .enabled, .ready (aligning), .merged
   sensor.players (nearest first: .name .position .velocity .distance .seated), sensor:closest(),
     .detected, .count, .range, sensor:set_range(m)  (1-500 m)
   grid.velocity, .angular_velocity, .gravity (grid frame vectors), .altitude, .planet, .mass, .speed
@@ -556,6 +561,20 @@ func _select_block(id: int) -> void:
 			panel_detail.add_child(gl)
 		"door":
 			_button("Open / Close", func(): game.set_door(id, not game.block_info(id)["door_open"]))
+		"landing_gear", "connector":
+			var is_gear: bool = b["kind"] == "landing_gear"
+			_button("Lock / Unlock" if is_gear else "Connect / Disconnect", func(): game.set_lock(id, game.block_info(id)["value"] < 1.5))
+			var acb := CheckBox.new()
+			acb.text = "Auto-lock when something touches the pad" if is_gear else "Auto-connect when lined up"
+			acb.button_pressed = b["auto_lock"]
+			acb.toggled.connect(func(on): game.set_auto_lock(id, on))
+			panel_detail.add_child(acb)
+		"merge":
+			var mcb := CheckBox.new()
+			mcb.text = "Enabled (switch off to split merged grids apart)"
+			mcb.button_pressed = b["merge_enabled"]
+			mcb.toggled.connect(func(on): game.set_merge_enabled(id, on))
+			panel_detail.add_child(mcb)
 		"sensor":
 			_slider("Range (m)", 1, 500, 1, b["sensor_range"], func(v): game.set_sensor_range(id, v))
 			var sl := Label.new()
@@ -609,6 +628,12 @@ func _update_value_label() -> void:
 			panel_value_label.text = "Angle: %.1f deg (unlimited)" % b["value"]
 		"door":
 			panel_value_label.text = "Open" if b["door_open"] else "Closed"
+		"landing_gear":
+			panel_value_label.text = ["Unlocked", "Ready to lock", "Locked"][clampi(int(round(b["value"])), 0, 2)]
+		"connector":
+			panel_value_label.text = ["No connector in range", "Ready to connect", "Connected"][clampi(int(round(b["value"])), 0, 2)]
+		"merge":
+			panel_value_label.text = ["Off", "On", "Aligning...", "Merged"][clampi(int(round(b["value"])), 0, 3)]
 		"sensor":
 			panel_value_label.text = "Detecting %d player(s) within %d m" % [int(b["value"]), int(b["sensor_range"])]
 		_:

@@ -44,6 +44,10 @@ pub struct Visuals {
     pub player: Gd<StandardMaterial3D>,
     pub visor: Gd<StandardMaterial3D>,
     pub sensor_on: Gd<StandardMaterial3D>,
+    /// Status lights: switched on (blue), ready / aligning (yellow), locked / merged (green).
+    pub light_on: Gd<StandardMaterial3D>,
+    pub light_ready: Gd<StandardMaterial3D>,
+    pub light_locked: Gd<StandardMaterial3D>,
 }
 
 impl Visuals {
@@ -85,6 +89,9 @@ impl Visuals {
             BlockKind::Door,
             BlockKind::Sensor,
             BlockKind::LargeThruster,
+            BlockKind::LandingGear,
+            BlockKind::MergeBlock,
+            BlockKind::Connector,
         ];
         let block_mats = all.iter().map(|k| (*k, material(k.color(), 0.0, 1.0))).collect();
         Self {
@@ -104,6 +111,9 @@ impl Visuals {
             player: material([0.85, 0.45, 0.15], 0.0, 1.0),
             visor: material([0.1, 0.15, 0.3], 0.5, 1.0),
             sensor_on: material([1.0, 0.25, 0.15], 5.0, 1.0),
+            light_on: material([0.2, 0.5, 1.0], 4.0, 1.0),
+            light_ready: material([1.0, 0.8, 0.1], 4.0, 1.0),
+            light_locked: material([0.15, 1.0, 0.3], 4.0, 1.0),
         }
     }
 }

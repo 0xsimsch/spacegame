@@ -705,3 +705,171 @@ fn large_thruster_blocks() {
     let w2 = World::load_bytes(&w.save_bytes()).unwrap();
     assert_eq!(w2.grids[&s].occupied.len(), 7);
 }
+
+fn grid_of(w: &World, block: BlockId) -> GridId {
+    w.block_loc[&block].0
+}
+
+fn attach_status(w: &World, block: BlockId) -> u8 {
+    World::attach_value(&w.block(block).unwrap().1.state).unwrap() as u8
+}
+
+#[test]
+fn removing_a_block_splits_the_grid() {
+    let mut w = World::new();
+    w.add_player(1, "builder");
+    let p = w.player_pos(1).unwrap();
+    let g = w.new_grid(1, p + DVec3::X * 4.0, DQuat::IDENTITY, BlockKind::Armor, false).unwrap();
+    for x in 1..=4 {
+        w.place_block(1, g, IVec3::new(x, 0, 0), ident(), BlockKind::Armor).unwrap();
+    }
+    let before = w.grids.len();
+    w.remove_block(1, g, IVec3::new(2, 0, 0)).unwrap();
+    assert_eq!(w.grids.len(), before + 1, "split into two grids");
+    let sizes: Vec<usize> = w.grids.values().filter(|x| x.id >= g).map(|x| x.blocks.len()).collect();
+    assert_eq!(sizes, vec![2, 2]);
+    assert!(w.drain_events().iter().any(|e| matches!(e, WorldEvent::GridReset { like, .. } if *like == g)));
+}
+
+/// Two small ships with merge blocks facing each other, slightly misaligned.
+fn merge_pair(w: &mut World) -> (GridId, GridId, BlockId, BlockId) {
+    let a = w.create_grid(deep_space(), DQuat::IDENTITY, false, None);
+    w.insert_block(a, IVec3::ZERO, ident(), BlockKind::Armor, None, None, false);
+    w.insert_block(a, IVec3::X, ident(), BlockKind::Armor, None, None, false);
+    let ma = w.insert_block(a, IVec3::NEG_Z, ident(), BlockKind::MergeBlock, None, Some("A Merge".into()), false);
+    // B is turned around (its merge block faces A), 1.6 m too far, 0.3 m off and tilted 6 degrees.
+    let rot_b = DQuat::from_rotation_y(std::f64::consts::PI) * DQuat::from_rotation_x(0.1);
+    let b = w.create_grid(deep_space() + DVec3::new(0.3, 0.0, -3.6), rot_b, false, None);
+    let mb = w.insert_block(b, IVec3::ZERO, ident(), BlockKind::MergeBlock, None, Some("B Merge".into()), false);
+    w.insert_block(b, IVec3::new(0, 0, 1), ident(), BlockKind::Armor, None, None, false);
+    (a, b, ma, mb)
+}
+
+#[test]
+fn merge_blocks_fuse_and_split() {
+    let mut w = World::new();
+    let (a, b, ma, mb) = merge_pair(&mut w);
+    let mut merged_at = None;
+    for i in 0..(8 * 60) {
+        w.step();
+        if !w.grids.contains_key(&b) {
+            merged_at = Some(i as f64 / 60.0);
+            break;
+        }
+    }
+    eprintln!("merged after {merged_at:?} s");
+    assert!(merged_at.is_some(), "the grids merged");
+    assert_eq!(w.grids[&a].blocks.len(), 5);
+    assert_eq!(grid_of(&w, mb), a);
+    // B's merge block now sits right in front of A's, facing it.
+    let (cell_a, cell_b) = (w.block_loc[&ma].1, w.block_loc[&mb].1);
+    assert_eq!(cell_b, cell_a + IVec3::NEG_Z);
+    run(&mut w, 0.5);
+    assert_eq!(attach_status(&w, ma), 3, "shows merged");
+    // Saves and loads as one grid.
+    let w2 = World::load_bytes(&w.save_bytes()).unwrap();
+    assert_eq!(w2.grids[&a].blocks.len(), 5);
+
+    // Switching one merge block off splits them again.
+    w.set_block_prop(ma, BlockProp::MergeEnabled(false)).unwrap();
+    assert_ne!(grid_of(&w, mb), a, "split off");
+    assert_eq!(w.grids[&a].blocks.len(), 3);
+    run(&mut w, 2.0);
+    assert_ne!(grid_of(&w, mb), a, "a disabled merge block does not merge again");
+    w.set_block_prop(ma, BlockProp::MergeEnabled(true)).unwrap();
+    run(&mut w, 2.0);
+    assert_eq!(grid_of(&w, mb), a, "merges again when re-enabled");
+}
+
+#[test]
+fn landing_gear_locks_and_holds() {
+    let mut w = World::new();
+    let ground = above("Earth", 0.0);
+    let rot = prefabs::surface_orientation(ground);
+    let up = rot * DVec3::Y;
+    // A static pad and a little lander resting on it with a gear facing down.
+    let pad = w.create_grid(ground + up * 0.5, rot, true, None);
+    for x in -1..=1 {
+        for z in -1..=1 {
+            w.insert_block(pad, IVec3::new(x, 0, z), ident(), BlockKind::Armor, None, None, false);
+        }
+    }
+    let lander = w.create_grid(ground + up * 1.5, rot, false, None);
+    let gear = w.insert_block(lander, IVec3::ZERO, orient::from_axes(IVec3::NEG_Y, IVec3::Z).unwrap(), BlockKind::LandingGear, None, None, false);
+    w.insert_block(lander, IVec3::Y, ident(), BlockKind::Armor, None, None, false);
+    let thr = w.insert_block(lander, IVec3::new(0, 1, 1), orient::from_axes(IVec3::Y, IVec3::Z).unwrap(), BlockKind::Thruster, None, None, false);
+    run(&mut w, 1.0);
+    assert_eq!(attach_status(&w, gear), 2, "auto-locked onto the pad");
+    // Full thrust (30 kN on ~400 kg) cannot pull it off.
+    w.set_block_prop(thr, BlockProp::ThrusterOverride(1.0)).unwrap();
+    let h0 = gravity_at(w.grid_pose(lander).unwrap().translation).altitude;
+    run(&mut w, 2.0);
+    let h1 = gravity_at(w.grid_pose(lander).unwrap().translation).altitude;
+    eprintln!("locked under thrust: moved {:.3} m", h1 - h0);
+    assert!((h1 - h0).abs() < 0.05, "held by the gear");
+    // Unlock: it flies off.
+    w.set_block_prop(gear, BlockProp::Lock(false)).unwrap();
+    run(&mut w, 1.0);
+    let h2 = gravity_at(w.grid_pose(lander).unwrap().translation).altitude;
+    assert!(h2 > h1 + 2.0, "released: {h2:.1}");
+    assert_eq!(attach_status(&w, gear), 0);
+
+    // On bare ground it locks to the planet itself.
+    w.set_block_prop(thr, BlockProp::ThrusterOverride(0.0)).unwrap();
+    let g2 = w.create_grid(ground + rot * DVec3::new(10.0, 2.0, 0.0), rot, false, None);
+    let gear2 = w.insert_block(g2, IVec3::ZERO, orient::from_axes(IVec3::NEG_Y, IVec3::Z).unwrap(), BlockKind::LandingGear, None, None, false);
+    run(&mut w, 2.0);
+    let lock = match &w.block(gear2).unwrap().1.state {
+        BlockState::Gear(a) => a.lock.as_ref().map(|l| l.target),
+        _ => None,
+    };
+    assert_eq!(lock, Some(LockTarget::Planet(3)), "locked to Earth");
+    // Locks survive save/load.
+    let w2 = World::load_bytes(&w.save_bytes()).unwrap();
+    assert_eq!(attach_status(&w2, gear2), 2);
+}
+
+#[test]
+fn connectors_dock_and_undock() {
+    let mut w = World::new();
+    let a = w.create_grid(deep_space(), DQuat::IDENTITY, false, None);
+    w.insert_block(a, IVec3::ZERO, ident(), BlockKind::Armor, None, None, false);
+    let ca = w.insert_block(a, IVec3::NEG_Z, ident(), BlockKind::Connector, None, None, false);
+    let rot_b = DQuat::from_rotation_y(std::f64::consts::PI) * DQuat::from_rotation_z(0.2);
+    let b = w.create_grid(deep_space() + DVec3::new(0.2, 0.1, -3.2), rot_b, false, None);
+    let cb = w.insert_block(b, IVec3::ZERO, ident(), BlockKind::Connector, None, None, false);
+    w.insert_block(b, IVec3::new(0, 0, 1), ident(), BlockKind::Armor, None, None, false);
+    run(&mut w, 4.0);
+    assert_eq!((attach_status(&w, ca), attach_status(&w, cb)), (2, 2), "pulled together and connected");
+    assert_ne!(grid_of(&w, ca), grid_of(&w, cb), "connected grids stay separate");
+    // Docked: pushing one drags the other along, and they keep their distance.
+    let gap = |w: &World| (w.grid_pose(a).unwrap().translation - w.grid_pose(b).unwrap().translation).length();
+    let gap0 = gap(&w);
+    let ba = w.grids[&a].body;
+    w.set_body_velocity(ba, Some(DVec3::X * 3.0), None);
+    run(&mut w, 1.0);
+    let moved = w.grid_pose(b).unwrap().translation.x - deep_space().x;
+    eprintln!("docked: gap {gap0:.3} -> {:.3}, partner moved {moved:.2} m", gap(&w));
+    assert!((gap(&w) - gap0).abs() < 0.05, "rigidly docked");
+    assert!(moved > 0.8, "dragged along");
+    let w2 = World::load_bytes(&w.save_bytes()).unwrap();
+    assert_eq!(attach_status(&w2, cb), 2, "still docked after load");
+    w.set_block_prop(cb, BlockProp::Lock(false)).unwrap();
+    assert!(attach_status(&w, ca) < 2 && attach_status(&w, cb) < 2, "undocked");
+}
+
+#[test]
+fn tug_parks_on_the_dock() {
+    let mut w = World::new();
+    let ground = above("Earth", 0.0);
+    let rot = prefabs::surface_orientation(ground);
+    let dock = w.spawn_prefab("dock", ground + rot * DVec3::new(0.0, 0.6, 0.0), rot, None).unwrap();
+    let tug = w.spawn_prefab("tug", ground + rot * DVec3::new(0.0, 2.6, 0.0), rot, None).unwrap();
+    run(&mut w, 2.0);
+    for b in w.grids[&tug].blocks.values().filter(|b| b.kind == BlockKind::LandingGear) {
+        match &b.state {
+            BlockState::Gear(a) => assert_eq!(a.lock.as_ref().map(|l| l.target), Some(LockTarget::Grid(dock)), "{} locked to the dock", b.name),
+            _ => unreachable!(),
+        }
+    }
+}

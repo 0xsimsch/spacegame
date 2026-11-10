@@ -48,6 +48,11 @@ pub struct BlockInfo {
     /// Sensors: detection range and the players inside it, nearest first.
     pub sensor_range: f64,
     pub sensed: Vec<SensedPlayer>,
+    /// Landing gear/connector: 0 idle, 1 ready, 2 locked. Merge block: 0 off,
+    /// 1 on, 2 aligning, 3 merged.
+    pub attach_status: u8,
+    pub auto_lock: bool,
+    pub merge_enabled: bool,
 }
 
 /// A player seen by a sensor. Vectors are in the programmable block's grid frame.
@@ -104,6 +109,9 @@ pub enum Command {
     GyroOverride(BlockId, Option<DVec3>),
     DoorOpen(BlockId, bool),
     SensorRange(BlockId, f64),
+    Lock(BlockId, bool),
+    AutoLock(BlockId, bool),
+    MergeEnabled(BlockId, bool),
 }
 
 #[derive(Debug, Default)]
@@ -214,6 +222,33 @@ impl UserData for BlockRef {
             let open = with_block(lua, this.0, |b| b.door_open)?;
             push(lua, Command::DoorOpen(this.0, !open))
         });
+        m.add_method("lock", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::LandingGear, "lock")?;
+            push(lua, Command::Lock(this.0, true))
+        });
+        m.add_method("unlock", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::LandingGear, "unlock")?;
+            push(lua, Command::Lock(this.0, false))
+        });
+        m.add_method("connect", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::Connector, "connect")?;
+            push(lua, Command::Lock(this.0, true))
+        });
+        m.add_method("disconnect", |lua, this, ()| {
+            kind_check(lua, this.0, BlockKind::Connector, "disconnect")?;
+            push(lua, Command::Lock(this.0, false))
+        });
+        m.add_method("set_auto_lock", |lua, this, on: bool| {
+            let k = with_block(lua, this.0, |b| b.kind)?;
+            if !matches!(k, BlockKind::LandingGear | BlockKind::Connector) {
+                return Err(mlua::Error::runtime(format!("set_auto_lock called on a {} block", k.api_name())));
+            }
+            push(lua, Command::AutoLock(this.0, on))
+        });
+        m.add_method("set_enabled", |lua, this, on: bool| {
+            kind_check(lua, this.0, BlockKind::MergeBlock, "set_enabled")?;
+            push(lua, Command::MergeEnabled(this.0, on))
+        });
         m.add_method("set_range", |lua, this, r: f64| {
             kind_check(lua, this.0, BlockKind::Sensor, "set_range")?;
             push(lua, Command::SensorRange(this.0, r))
@@ -251,6 +286,15 @@ impl UserData for BlockRef {
                     },
                     "is_open" => Value::Boolean(b.door_open),
                     "range" => Value::Number(b.sensor_range),
+                    "status" => Value::Integer(b.attach_status as _),
+                    "locked" | "connected" => Value::Boolean(b.kind != BlockKind::MergeBlock && b.attach_status == 2),
+                    "ready" => Value::Boolean(match b.kind {
+                        BlockKind::MergeBlock => b.attach_status == 2,
+                        _ => b.attach_status >= 1,
+                    }),
+                    "auto_lock" => Value::Boolean(b.auto_lock),
+                    "enabled" => Value::Boolean(b.merge_enabled),
+                    "merged" => Value::Boolean(b.kind == BlockKind::MergeBlock && b.attach_status == 3),
                     "detected" => Value::Boolean(!b.sensed.is_empty()),
                     "count" => Value::Integer(b.sensed.len() as _),
                     "players" if b.kind == BlockKind::Sensor => {
@@ -531,6 +575,9 @@ mod tests {
                     door_open: false,
                     sensor_range: 0.0,
                     sensed: Vec::new(),
+                    attach_status: 0,
+                    auto_lock: false,
+                    merge_enabled: false,
                 },
                 BlockInfo {
                     id: 3,
@@ -553,6 +600,9 @@ mod tests {
                     door_open: false,
                     sensor_range: 0.0,
                     sensed: Vec::new(),
+                    attach_status: 0,
+                    auto_lock: false,
+                    merge_enabled: false,
                 },
             ],
             ..Default::default()

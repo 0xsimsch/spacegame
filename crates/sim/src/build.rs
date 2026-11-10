@@ -50,13 +50,7 @@ impl World {
         });
         self.next_block = self.next_block.max(id + 1);
         let g = self.grids.get_mut(&grid).expect("grid exists");
-        let half = BLOCK_HALF + (kind.size() - 1) as f64 * 0.5;
-        let col = ColliderBuilder::cuboid(half, half, half)
-            .translation((cell.as_dvec3() + kind.center_offset(rot)) * shared::CELL_SIZE)
-            .mass(kind.mass())
-            .friction(0.8)
-            .user_data(id as u128)
-            .build();
+        let col = Self::block_collider(kind, cell, rot, id);
         let collider = self.phys.insert_collider(col, Some(g.body));
         let state = match kind {
             k if k.is_thruster() => BlockState::Thruster(Thruster { override_: 0.0, demand: 0.0, output: 0.0 }),
@@ -84,6 +78,9 @@ impl World {
             BlockKind::Gyro => BlockState::Gyro { override_: None },
             BlockKind::Door => BlockState::Door { open: false },
             BlockKind::Sensor => BlockState::Sensor { range: SENSOR_DEFAULT_RANGE, detected: 0 },
+            BlockKind::LandingGear => BlockState::Gear(Attach::new(true)),
+            BlockKind::Connector => BlockState::Connector(Attach::new(true)),
+            BlockKind::MergeBlock => BlockState::Merge { enabled: true, status: 1 },
             _ => BlockState::Plain,
         };
         let name = name.unwrap_or_else(|| self.default_name(grid, kind));
@@ -100,6 +97,17 @@ impl World {
             self.create_head(id);
         }
         id
+    }
+
+    /// The collider of one block (a box covering its footprint).
+    pub(crate) fn block_collider(kind: BlockKind, cell: IVec3, rot: u8, id: BlockId) -> Collider {
+        let half = BLOCK_HALF + (kind.size() - 1) as f64 * 0.5;
+        ColliderBuilder::cuboid(half, half, half)
+            .translation((cell.as_dvec3() + kind.center_offset(rot)) * shared::CELL_SIZE)
+            .mass(kind.mass())
+            .friction(0.8)
+            .user_data(id as u128)
+            .build()
     }
 
     fn default_name(&self, grid: GridId, kind: BlockKind) -> String {
@@ -199,8 +207,11 @@ impl World {
 
     /// Remove a block without validation. Cleans up joints, seats and empty grids.
     pub(crate) fn delete_block(&mut self, grid: GridId, cell: IVec3) {
-        let Some(g) = self.grids.get_mut(&grid) else { return };
-        let Some(cell) = g.anchor_at(cell) else { return };
+        let Some(cell) = self.grids.get(&grid).and_then(|g| g.anchor_at(cell)) else { return };
+        let Some(id) = self.grids[&grid].blocks.get(&cell).map(|b| b.id) else { return };
+        // Let go of whatever a landing gear or connector held.
+        self.unlock_block(id);
+        let g = self.grids.get_mut(&grid).unwrap();
         let Some(block) = g.blocks.remove(&cell) else { return };
         for c in block.kind.footprint(cell, block.rot).into_iter().skip(1) {
             g.occupied.remove(&c);
@@ -303,6 +314,10 @@ impl World {
         let wp = self.phys.bodies[g.body].position().transform_point(cell.as_dvec3());
         self.check_reach(player, wp)?;
         self.delete_block(grid, cell);
+        // The rest may have fallen into separate pieces.
+        if self.grids.contains_key(&grid) {
+            self.split_grid(grid);
+        }
         Ok(())
     }
 
@@ -329,6 +344,9 @@ impl World {
     }
 
     pub fn set_block_prop(&mut self, block: BlockId, prop: BlockProp) -> Result<(), String> {
+        if let Some(r) = crate::attach::attach_prop(self, block, &prop) {
+            return r;
+        }
         let b = self.block_mut(block).ok_or("no such block")?;
         match (&mut b.state, prop) {
             (BlockState::Thruster(t), BlockProp::ThrusterOverride(v)) => t.override_ = (v as f64).clamp(0.0, 1.0),

@@ -1,6 +1,7 @@
 //! Authoritative game simulation: physics world, grids, blocks, players and scripts.
 //! Has no knowledge of networking or rendering.
 
+mod attach;
 mod build;
 mod control;
 pub mod prefabs;
@@ -14,6 +15,7 @@ use shared::{BlockId, DQuat, DVec3, GridId, IVec3, PlayerId, TICK_DT};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
+pub use attach::{Attach, Lock, LockTarget};
 pub use save::SaveData;
 
 /// Bit set in rigid-body `user_data` for players (otherwise it is a grid id).
@@ -93,6 +95,11 @@ pub enum BlockState {
     Door { open: bool },
     /// Detection range (m) and how many players were inside it last tick.
     Sensor { range: f64, detected: u32 },
+    /// Landing gear and connectors.
+    Gear(Attach),
+    Connector(Attach),
+    /// Merge block; `status`: 0 off, 1 on, 2 aligning with another, 3 merged.
+    Merge { enabled: bool, status: u8 },
 }
 
 #[derive(Debug)]
@@ -159,6 +166,9 @@ pub enum WorldEvent {
     ScriptOutput { grid: GridId, block: BlockId, lines: Vec<String>, error: Option<String> },
     /// Message for one player (errors from commands etc.).
     Notice { player: PlayerId, text: String },
+    /// A grid's block list changed wholesale (merge/split): send `grid` in full
+    /// to every client that knows `like`.
+    GridReset { grid: GridId, like: GridId },
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -183,6 +193,8 @@ pub struct World {
     /// Player positions by name, restored when they reconnect.
     pub saved_players: HashMap<String, DVec3>,
     dirty_controls: HashSet<BlockId>,
+    /// Rigid bodies of the planets, by index in `shared::solar::BODIES`.
+    pub planet_bodies: Vec<RigidBodyHandle>,
 }
 
 impl Default for World {
@@ -198,6 +210,7 @@ pub fn pose(pos: DVec3, rot: DQuat) -> Pose {
 impl World {
     pub fn new() -> Self {
         let mut phys = PhysicsWorld::new();
+        let mut planet_bodies = Vec::new();
         phys.gravity = DVec3::ZERO;
         phys.integration_parameters.dt = TICK_DT;
         phys.integration_parameters.num_solver_iterations = 8;
@@ -207,7 +220,7 @@ impl World {
                 .user_data(PLANET_FLAG | i as u128)
                 .build();
             let col = ColliderBuilder::ball(b.radius).friction(0.9).build();
-            phys.insert(body, col);
+            planet_bodies.push(phys.insert(body, col).0);
         }
         Self {
             phys,
@@ -221,6 +234,7 @@ impl World {
             stats: StepStats::default(),
             saved_players: HashMap::new(),
             dirty_controls: HashSet::new(),
+            planet_bodies,
         }
     }
 
@@ -348,6 +362,8 @@ impl World {
             gyro_override: None,
             door_open: false,
             sensor_range: 0.0,
+            auto_lock: false,
+            merge_enabled: false,
         };
         match &b.state {
             BlockState::Thruster(t) => info.thruster_override = t.override_ as f32,
@@ -363,6 +379,8 @@ impl World {
             BlockState::Gyro { override_ } => info.gyro_override = override_.map(|v| v.as_vec3().to_array()),
             BlockState::Door { open } => info.door_open = *open,
             BlockState::Sensor { range, .. } => info.sensor_range = *range as f32,
+            BlockState::Gear(a) | BlockState::Connector(a) => info.auto_lock = a.auto_lock,
+            BlockState::Merge { enabled, .. } => info.merge_enabled = *enabled,
             _ => {}
         }
         Some(info)
@@ -396,6 +414,7 @@ impl World {
         self.apply_cockpit_control();
         self.apply_grid_forces();
         self.update_mech_motors();
+        self.update_attachments();
 
         let tp = Instant::now();
         self.phys.step();

@@ -51,6 +51,8 @@ struct BlockNode {
     eye: Option<Gd<Node3D>>,
     /// Edge length in cells (2 for the large thruster).
     size: f32,
+    /// Status lights, each shown while the block's value equals its status.
+    lights: Vec<(Gd<Node3D>, i32)>,
 }
 
 struct GridNode {
@@ -266,6 +268,12 @@ impl INode3D for SpaceGame {
                 Key::F => self.interact(),
                 Key::K => self.open_panel_for_target(),
                 Key::V => self.third_person = !self.third_person,
+                Key::P => self.toggle_ship_locks(),
+                // Shift+1..4: the second row of blocks (large thruster, landing gear, merge block, connector).
+                key @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4) if k.is_shift_pressed() => {
+                    self.build_kind = 10 + (key.ord() - Key::KEY_1.ord()) as usize;
+                    self.build_mode = true;
+                }
                 Key::KEY_0 => self.build_kind = 9,
                 Key::MINUS => self.build_kind = 10,
                 k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6 | Key::KEY_7 | Key::KEY_8 | Key::KEY_9) => {
@@ -457,12 +465,33 @@ impl SpaceGame {
                 let open = self.st.values.get(&hit.block).copied().unwrap_or(0.0) > 0.5;
                 self.send(ClientMsg::SetBlockProp { block: hit.block, prop: BlockProp::DoorOpen(!open) });
             }
+            BlockKind::LandingGear | BlockKind::Connector => {
+                let locked = self.st.values.get(&hit.block).copied().unwrap_or(0.0) > 1.5;
+                self.send(ClientMsg::SetBlockProp { block: hit.block, prop: BlockProp::Lock(!locked) });
+            }
             BlockKind::Programmable => {
                 self.send(ClientMsg::RequestScript { block: hit.block });
                 self.st.ui_events.push(UiEvent::OpenEditor { block: hit.block });
             }
             k if k.is_terminal() => self.st.ui_events.push(UiEvent::OpenPanel { grid: hit.grid, block: Some(hit.block) }),
             _ => self.st.ui_events.push(UiEvent::OpenPanel { grid: hit.grid, block: None }),
+        }
+    }
+
+    /// P: lock every landing gear and connector of the ship you sit in, or
+    /// unlock them all if any is locked.
+    fn toggle_ship_locks(&mut self) {
+        let Some(seat) = self.st.my_seat() else { return };
+        let Some((gid, _)) = self.st.block(seat) else { return };
+        let ids: Vec<BlockId> = self.st.grids[&gid]
+            .blocks
+            .values()
+            .filter(|b| matches!(b.kind, BlockKind::LandingGear | BlockKind::Connector))
+            .map(|b| b.id)
+            .collect();
+        let any_locked = ids.iter().any(|id| self.st.values.get(id).copied().unwrap_or(0.0) > 1.5);
+        for id in ids {
+            self.send(ClientMsg::SetBlockProp { block: id, prop: BlockProp::Lock(!any_locked) });
         }
     }
 
@@ -557,6 +586,9 @@ impl SpaceGame {
                     let open = v > 0.5;
                     d.set_position(Vector3::new(0.0, if open { 0.42 } else { 0.0 }, 0.0));
                     d.set_scale(Vector3::new(0.82, if open { 0.08 } else { 0.82 }, 0.2));
+                }
+                for (l, status) in bn.lights.iter_mut() {
+                    l.set_visible(v.round() as i32 == *status);
                 }
                 if let Some(e) = &mut bn.eye {
                     e.set_visible(v > 0.5);
@@ -672,11 +704,14 @@ impl SpaceGame {
                     | BlockKind::Door
                     | BlockKind::Sensor
                     | BlockKind::Cockpit
+                    | BlockKind::LandingGear
+                    | BlockKind::MergeBlock
+                    | BlockKind::Connector
             );
             let mut bn = Node3D::new_alloc();
             bn.set_position(bpos);
             bn.set_quaternion(bq);
-            let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None, eye: None, size: b.kind.size() as f32 };
+            let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None, eye: None, size: b.kind.size() as f32, lights: Vec::new() };
             match b.kind {
                 BlockKind::Thruster => {
                     stat(&cube, mat, Vector3::new(0.0, 0.0, -0.15), Vector3::new(1.0, 1.0, 0.7), None);
@@ -734,6 +769,36 @@ impl SpaceGame {
                     stat(&cube, &vis.dark, Vector3::new(-0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
                     let panel = add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::new(0.82, 0.82, 0.2), None);
                     node.door = Some(panel);
+                }
+                BlockKind::LandingGear => {
+                    // Body plus a dark magnetic pad on the forward (-Z) face, lights on both sides.
+                    stat(&cube, mat, Vector3::new(0.0, 0.0, 0.15), Vector3::new(1.0, 1.0, 0.7), None);
+                    stat(&cube, &vis.dark, Vector3::new(0.0, 0.0, -0.36), Vector3::new(0.92, 0.92, 0.3), None);
+                    for x in [-0.5, 0.5] {
+                        let pos = Vector3::new(x, 0.0, 0.15);
+                        let sc = Vector3::new(0.06, 0.25, 0.4);
+                        node.lights.push((add(&mut bn, &cube, &vis.light_ready, pos, sc, None), 1));
+                        node.lights.push((add(&mut bn, &cube, &vis.light_locked, pos, sc, None), 2));
+                    }
+                }
+                BlockKind::Connector => {
+                    // Body plus a docking ring; the light sits in the middle of the ring.
+                    stat(&cube, mat, Vector3::new(0.0, 0.0, 0.15), Vector3::new(1.0, 1.0, 0.7), None);
+                    stat(&cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.35), Vector3::new(0.85, 0.3, 0.85), Some(along_z));
+                    let pos = Vector3::new(0.0, 0.0, -0.5);
+                    let sc = Vector3::new(0.4, 0.06, 0.4);
+                    node.lights.push((add(&mut bn, &cyl, &vis.light_ready, pos, sc, Some(along_z)), 1));
+                    node.lights.push((add(&mut bn, &cyl, &vis.light_locked, pos, sc, Some(along_z)), 2));
+                }
+                BlockKind::MergeBlock => {
+                    // Body with a dark contact plate and a light strip on the forward face.
+                    stat(&cube, mat, Vector3::ZERO, Vector3::ONE, None);
+                    stat(&cube, &vis.dark, Vector3::new(0.0, 0.0, -0.47), Vector3::new(0.85, 0.85, 0.06), None);
+                    let pos = Vector3::new(0.0, 0.0, -0.5);
+                    let sc = Vector3::new(0.6, 0.12, 0.04);
+                    node.lights.push((add(&mut bn, &cube, &vis.light_on, pos, sc, None), 1));
+                    node.lights.push((add(&mut bn, &cube, &vis.light_ready, pos, sc, None), 2));
+                    node.lights.push((add(&mut bn, &cube, &vis.light_locked, pos, sc, None), 3));
                 }
                 BlockKind::Sensor => {
                     // Base, mast and a dome with an eye on the front (-Z) face.
@@ -881,6 +946,8 @@ impl SpaceGame {
             "gyro_hold" => c.and_then(|c| c.gyro_override).is_some(),
             "door_open" => self.st.values.get(&b.id).copied().unwrap_or(0.0) > 0.5,
             "sensor_range" => c.map(|c| c.sensor_range).unwrap_or(shared::blocks::SENSOR_DEFAULT_RANGE as f32),
+            "auto_lock" => c.map(|c| c.auto_lock).unwrap_or(false),
+            "merge_enabled" => c.map(|c| c.merge_enabled).unwrap_or(false),
         }
     }
 }
@@ -1084,6 +1151,21 @@ impl SpaceGame {
     }
 
     #[func]
+    fn set_lock(&mut self, block: i64, on: bool) {
+        self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::Lock(on) });
+    }
+
+    #[func]
+    fn set_auto_lock(&mut self, block: i64, on: bool) {
+        self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::AutoLock(on) });
+    }
+
+    #[func]
+    fn set_merge_enabled(&mut self, block: i64, on: bool) {
+        self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::MergeEnabled(on) });
+    }
+
+    #[func]
     fn set_sensor_range(&mut self, block: i64, range: f64) {
         self.send(ClientMsg::SetBlockProp { block: block as BlockId, prop: BlockProp::SensorRange(range as f32) });
     }
@@ -1155,7 +1237,7 @@ impl SpaceGame {
             let kind = BUILDABLE[self.build_kind];
             let f = orient::forward(self.build_rot);
             s += &format!(
-                "BUILD: {} (1-0, - / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
+                "BUILD: {} (1-0, Shift+1-4 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
                 kind.display_name(),
                 f,
                 if self.build_static { "STATION (static)" } else { "SHIP (dynamic)" }
@@ -1170,6 +1252,17 @@ impl SpaceGame {
                     BlockKind::Programmable => "[F] edit script",
                     BlockKind::Door => {
                         if self.st.values.get(&b.id).copied().unwrap_or(0.0) > 0.5 { "[F] close" } else { "[F] open" }
+                    }
+                    BlockKind::LandingGear | BlockKind::Connector => {
+                        let v = self.st.values.get(&b.id).copied().unwrap_or(0.0);
+                        match (b.kind, v > 1.5, v > 0.5) {
+                            (BlockKind::LandingGear, true, _) => "[F] unlock",
+                            (BlockKind::LandingGear, false, true) => "[F] lock (ready)",
+                            (BlockKind::LandingGear, ..) => "(nothing to lock onto)",
+                            (_, true, _) => "[F] disconnect",
+                            (_, false, true) => "[F] connect (ready)",
+                            _ => "(no connector in range)",
+                        }
                     }
                     k if k.is_terminal() => "[F] control",
                     _ => "",

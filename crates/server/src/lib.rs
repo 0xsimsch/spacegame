@@ -343,11 +343,31 @@ impl GameServer {
                 WorldEvent::ScriptOutput { grid, block, lines, error } => {
                     self.send_grid_watchers(grid, &ServerMsg::ScriptOutput { block, lines, error })
                 }
+                WorldEvent::GridReset { grid, like } => {
+                    let ids: Vec<ClientId> =
+                        self.clients.iter().filter(|(_, c)| c.known_grids.contains(&like)).map(|(id, _)| *id).collect();
+                    for id in ids {
+                        self.send_full_grid(id, grid);
+                    }
+                }
                 WorldEvent::Notice { player, text } => {
                     if let Some(id) = self.client_of(player) {
                         self.notice(id, text);
                     }
                 }
+            }
+        }
+    }
+
+    /// Send a grid with all its blocks (and their control settings) to a client.
+    fn send_full_grid(&mut self, id: ClientId, g: GridId) {
+        let Some(data) = self.grid_data(g) else { return };
+        let terminal: Vec<BlockId> = data.blocks.iter().filter(|b| b.kind.is_terminal()).map(|b| b.id).collect();
+        self.clients.get_mut(&id).unwrap().known_grids.insert(g);
+        self.send(id, RELIABLE, &ServerMsg::FullGrid(data));
+        for b in terminal {
+            if let Some(info) = self.world.control_info(b) {
+                self.send(id, RELIABLE, &ServerMsg::BlockControl(info));
             }
         }
     }
@@ -382,16 +402,7 @@ impl GameServer {
                 self.send(id, RELIABLE, &ServerMsg::GridRemoved(g));
             }
             for g in entering {
-                if let Some(data) = self.grid_data(g) {
-                    let terminal: Vec<BlockId> = data.blocks.iter().filter(|b| b.kind.is_terminal()).map(|b| b.id).collect();
-                    self.clients.get_mut(&id).unwrap().known_grids.insert(g);
-                    self.send(id, RELIABLE, &ServerMsg::FullGrid(data));
-                    for b in terminal {
-                        if let Some(info) = self.world.control_info(b) {
-                            self.send(id, RELIABLE, &ServerMsg::BlockControl(info));
-                        }
-                    }
-                }
+                self.send_full_grid(id, g);
             }
         }
     }
@@ -449,6 +460,9 @@ impl GameServer {
                         BlockState::Mech(m) => m.value,
                         BlockState::Door { open } => *open as u8 as f64,
                         BlockState::Sensor { detected, .. } => *detected as f64,
+                        s @ (BlockState::Gear(_) | BlockState::Connector(_) | BlockState::Merge { .. }) => {
+                            World::attach_value(s).unwrap_or(0.0)
+                        }
                         _ => continue,
                     };
                     let v = v as f32;
@@ -560,7 +574,7 @@ impl GameServer {
                     client,
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
-                     /spawn <ship|shuttle|cruiser|drone|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
+                     /spawn <ship|shuttle|cruiser|drone|tug|dock|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
                      /sit [cockpit name] - sit in the nearest free cockpit (150 m)\n/save - save the world\n/where - show your position",
                 );
                 Ok(())
@@ -596,7 +610,7 @@ impl GameServer {
                 let pos = self.world.player_pos(pid).unwrap();
                 let fwd = p * DVec3::NEG_Z;
                 let dist = match what {
-                    "ship" | "pad" | "arm" | "drone" => 8.0,
+                    "ship" | "pad" | "arm" | "drone" | "tug" => 8.0,
                     "shuttle" => 12.0,
                     "cruiser" | "frigate" => 60.0,
                     _ => 15.0,
@@ -609,7 +623,7 @@ impl GameServer {
                     let body = &shared::solar::BODIES[b];
                     let up = (at - body.position).normalize();
                     let ground = body.position + up * (body.radius + match what {
-                        "ship" | "drone" | "cruiser" | "frigate" => 1.6,
+                        "ship" | "drone" | "cruiser" | "frigate" | "tug" => 1.6,
                         "shuttle" => 4.0,
                         _ => 0.6,
                     });
@@ -661,6 +675,8 @@ fn seed_world(world: &mut World) {
     world.spawn_prefab("shuttle", spawn + rot * DVec3::new(-28.0, 4.0, 2.0), rot, None);
     world.spawn_prefab("drone", spawn + rot * DVec3::new(6.0, 1.6, -4.0), rot, None);
     world.spawn_prefab("cruiser", spawn + rot * DVec3::new(62.0, 1.6, -20.0), rot, None);
+    world.spawn_prefab("dock", spawn + rot * DVec3::new(-14.0, 0.6, 22.0), rot, None);
+    world.spawn_prefab("tug", spawn + rot * DVec3::new(-14.0, 2.6, 22.0), rot, None);
 }
 
 /// 20 hovering ships + 30 sweeping arms = 50 scripts, all near the Earth spawn.

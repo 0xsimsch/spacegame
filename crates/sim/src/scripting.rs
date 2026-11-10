@@ -40,6 +40,8 @@ impl World {
                 let (mut pp, mut pv, mut ha, mut hv, mut ht, mut free) = (0.0, 0.0, 0.0, 0.0, None, false);
                 let (mut gyro, mut door) = (None, false);
                 let (mut sensor_range, mut sensed) = (0.0, Vec::new());
+                let (mut auto_lock, mut merge_enabled) = (false, false);
+                let attach_status = World::attach_value(&b.state).unwrap_or(0.0) as u8;
                 match &b.state {
                     BlockState::Thruster(t) => {
                         info_thr = b.kind.thrust();
@@ -59,6 +61,8 @@ impl World {
                     }
                     BlockState::Gyro { override_ } => gyro = *override_,
                     BlockState::Door { open } => door = *open,
+                    BlockState::Gear(a) | BlockState::Connector(a) => auto_lock = a.auto_lock,
+                    BlockState::Merge { enabled, .. } => merge_enabled = *enabled,
                     BlockState::Sensor { range, .. } => {
                         sensor_range = *range;
                         let at = op.transform_point(b.cell.as_dvec3());
@@ -98,6 +102,9 @@ impl World {
                     door_open: door,
                     sensor_range,
                     sensed,
+                    attach_status,
+                    auto_lock,
+                    merge_enabled,
                 });
             }
         }
@@ -190,7 +197,10 @@ impl World {
                 | Command::SetFree(id, _)
                 | Command::GyroOverride(id, _)
                 | Command::DoorOpen(id, _)
-                | Command::SensorRange(id, _) => Some(*id),
+                | Command::SensorRange(id, _)
+                | Command::Lock(id, _)
+                | Command::AutoLock(id, _)
+                | Command::MergeEnabled(id, _) => Some(*id),
                 _ => None,
             };
             if let Some(t) = target {
@@ -216,6 +226,15 @@ impl World {
                 }
                 Command::DoorOpen(id, on) => {
                     let _ = self.set_block_prop(id, BlockProp::DoorOpen(on));
+                }
+                Command::Lock(id, on) => {
+                    let _ = self.set_block_prop(id, BlockProp::Lock(on));
+                }
+                Command::AutoLock(id, on) => {
+                    let _ = self.set_block_prop(id, BlockProp::AutoLock(on));
+                }
+                Command::MergeEnabled(id, on) => {
+                    let _ = self.set_block_prop(id, BlockProp::MergeEnabled(on));
                 }
                 Command::SensorRange(id, r) => {
                     let _ = self.set_block_prop(id, BlockProp::SensorRange(r as f32));

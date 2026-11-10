@@ -40,6 +40,12 @@ pub enum BlockProp {
     DoorOpen(bool),
     /// Sensor detection range in metres.
     SensorRange(f32),
+    /// Landing gear: lock/unlock. Connector: connect/disconnect.
+    Lock(bool),
+    /// Landing gear: lock automatically when something touches the pad.
+    AutoLock(bool),
+    /// Merge block: when off it does not merge, and a merged one splits off.
+    MergeEnabled(bool),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -99,7 +105,9 @@ pub struct GridState {
 }
 
 /// A per-block animated value: thruster output (0..1), piston extension (m),
-/// hinge angle (deg), door open (1/0) or number of players a sensor detects.
+/// hinge angle (deg), door open (1/0), number of players a sensor detects, or
+/// the attach status of landing gear / connectors (0 idle, 1 ready, 2 locked) and
+/// merge blocks (0 off, 1 on, 2 aligning, 3 merged).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockValue {
     pub id: BlockId,
@@ -147,6 +155,8 @@ pub struct BlockControlInfo {
     pub gyro_override: Option<[f32; 3]>,
     pub door_open: bool,
     pub sensor_range: f32,
+    pub auto_lock: bool,
+    pub merge_enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

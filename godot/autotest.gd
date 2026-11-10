@@ -187,6 +187,21 @@ func _run() -> void:
 	game.send_chat("/tp earth")
 	await _wait(1.5)
 
+	# Attach blocks: a tug parked on a dock locks its landing gear.
+	game.send_chat("/spawn dock")
+	await _wait(1.0)
+	game.send_chat("/spawn tug")
+	await _wait(3.0)
+	var gears_locked := 0
+	for gid in game.debug_grid_ids():
+		for blk in game.grid_blocks(gid):
+			if blk["kind"] == "landing_gear" and game.block_info(blk["id"])["value"] > 1.5:
+				gears_locked += 1
+	_check(gears_locked >= 2, "tug landing gear locked (%d)" % gears_locked)
+	game.debug_look_at_block("Tug Connector", 0.0)
+	await _wait(0.5)
+	await _shot("04f_tug_dock")
+
 	# Script editor round trip on the spawned ship's flight computer.
 	var pb := -1
 	for gid in game.debug_grid_ids():

@@ -29,10 +29,17 @@ pub enum BlockKind {
     /// A 2x2x2 thruster: the anchor cell is its front-left-bottom corner,
     /// it extends to the right, up and backwards (toward the nozzle).
     LargeThruster,
+    /// Magnetic pad on its forward face: locks onto a grid or the ground in front of it.
+    LandingGear,
+    /// Two merge blocks facing each other pull their grids together and fuse them
+    /// into one; disabling one splits them apart again.
+    MergeBlock,
+    /// Docking port: locks to another connector facing it, the grids stay separate.
+    Connector,
 }
 
 /// Blocks the player can pick in build mode, in hot-bar order.
-pub const BUILDABLE: [BlockKind; 11] = [
+pub const BUILDABLE: [BlockKind; 14] = [
     BlockKind::Armor,
     BlockKind::Thruster,
     BlockKind::Piston,
@@ -44,6 +51,9 @@ pub const BUILDABLE: [BlockKind; 11] = [
     BlockKind::Door,
     BlockKind::Sensor,
     BlockKind::LargeThruster,
+    BlockKind::LandingGear,
+    BlockKind::MergeBlock,
+    BlockKind::Connector,
 ];
 
 /// Maximum thrust of one thruster in newtons.
@@ -134,6 +144,9 @@ impl BlockKind {
             BlockKind::Door => 80.0,
             BlockKind::Sensor => 120.0,
             BlockKind::LargeThruster => 900.0,
+            BlockKind::LandingGear => 150.0,
+            BlockKind::MergeBlock => 150.0,
+            BlockKind::Connector => 150.0,
         }
     }
 
@@ -153,6 +166,9 @@ impl BlockKind {
             BlockKind::Door => "Door",
             BlockKind::Sensor => "Sensor",
             BlockKind::LargeThruster => "Large Thruster",
+            BlockKind::LandingGear => "Landing Gear",
+            BlockKind::MergeBlock => "Merge Block",
+            BlockKind::Connector => "Connector",
         }
     }
 
@@ -174,6 +190,9 @@ impl BlockKind {
             BlockKind::Sensor => "sensor",
             // Scripts treat both sizes as thrusters (`.max_thrust` tells them apart).
             BlockKind::LargeThruster => "thruster",
+            BlockKind::LandingGear => "landing_gear",
+            BlockKind::MergeBlock => "merge",
+            BlockKind::Connector => "connector",
         }
     }
 
@@ -200,6 +219,9 @@ impl BlockKind {
             BlockKind::Door => [0.45, 0.5, 0.55],
             BlockKind::Sensor => [0.15, 0.7, 0.75],
             BlockKind::LargeThruster => [0.3, 0.31, 0.36],
+            BlockKind::LandingGear => [0.8, 0.6, 0.1],
+            BlockKind::MergeBlock => [0.75, 0.75, 0.3],
+            BlockKind::Connector => [0.35, 0.55, 0.6],
         }
     }
 }

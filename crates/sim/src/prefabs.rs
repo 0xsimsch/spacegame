@@ -5,8 +5,9 @@ use shared::BlockId;
 use shared::examples;
 use shared::orient::from_axes;
 
-pub const NAMES: [&str; 12] =
-    ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle", "drone", "cruiser", "frigate"];
+pub const NAMES: [&str; 14] = [
+    "ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle", "drone", "cruiser", "frigate", "tug", "dock",
+];
 
 fn rot(fwd: IVec3, up: IVec3) -> u8 {
     from_axes(fwd, up).expect("valid axes")
@@ -29,6 +30,8 @@ impl World {
             "drone" => Some(self.spawn_drone(pos, orientation)),
             // "frigate" is the old name of the cruiser.
             "cruiser" | "frigate" => Some(self.spawn_cruiser(pos, orientation)),
+            "tug" => Some(self.spawn_tug(pos, orientation)),
+            "dock" => Some(self.spawn_dock(pos, orientation)),
             _ => None,
         }
     }
@@ -467,6 +470,44 @@ impl World {
             self.armor(barrel, (1..=4).map(|y| IVec3::new(0, y, 0)));
         }
         let _ = self.upload_script(pb, examples::CRUISER);
+        g
+    }
+
+    /// A small tug for trying the attach blocks: connector at the front, merge
+    /// block at the back, two landing gears underneath (auto-lock: press P or F
+    /// on a gear to take off). The gear pads are 1.5 m below the origin.
+    fn spawn_tug(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.create_grid(pos, orientation, false, None);
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+        let b = |w: &mut World, cell: IVec3, r: u8, k: BlockKind, name: &str| {
+            w.insert_block(g, cell, r, k, None, Some(name.to_string()), false)
+        };
+        b(self, IVec3::ZERO, ident, BlockKind::Armor, "Tug Core");
+        b(self, IVec3::Y, ident, BlockKind::Cockpit, "Tug Cockpit");
+        b(self, IVec3::NEG_Z, ident, BlockKind::Connector, "Tug Connector");
+        b(self, IVec3::Z, rot(IVec3::Z, IVec3::Y), BlockKind::MergeBlock, "Tug Merge Block");
+        for (i, (x, z)) in [(1, 1), (-1, 1), (1, -1), (-1, -1)].into_iter().enumerate() {
+            b(self, IVec3::new(x, 0, z), rot(IVec3::Y, IVec3::Z), BlockKind::Thruster, &format!("Lift Thruster {}", i + 1));
+        }
+        b(self, IVec3::X, rot(IVec3::NEG_X, IVec3::Y), BlockKind::Thruster, "Left Thruster");
+        b(self, IVec3::NEG_X, rot(IVec3::X, IVec3::Y), BlockKind::Thruster, "Right Thruster");
+        b(self, IVec3::NEG_Y, rot(IVec3::NEG_Y, IVec3::Z), BlockKind::Thruster, "Down Thruster");
+        b(self, IVec3::new(0, -1, 1), rot(IVec3::NEG_Z, IVec3::Y), BlockKind::Thruster, "Main Thruster");
+        b(self, IVec3::new(0, -1, -1), rot(IVec3::Z, IVec3::Y), BlockKind::Thruster, "Brake Thruster");
+        let down = rot(IVec3::NEG_Y, IVec3::Z);
+        b(self, IVec3::new(1, -1, 0), down, BlockKind::LandingGear, "Tug Gear Left");
+        b(self, IVec3::new(-1, -1, 0), down, BlockKind::LandingGear, "Tug Gear Right");
+        g
+    }
+
+    /// A static docking pad: a connector post on one side and a merge-block
+    /// post on the other, both 2 m above the deck and facing its centre.
+    fn spawn_dock(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        let g = self.create_grid(pos, orientation, true, None);
+        self.armor(g, (-4..=4).flat_map(|x| (-3..=3).map(move |z| IVec3::new(x, 0, z))));
+        self.armor(g, [IVec3::new(5, 0, 0), IVec3::new(5, 1, 0), IVec3::new(5, 2, 0), IVec3::new(-5, 0, 0), IVec3::new(-5, 1, 0), IVec3::new(-5, 2, 0)]);
+        self.insert_block(g, IVec3::new(4, 2, 0), rot(IVec3::NEG_X, IVec3::Y), BlockKind::Connector, None, Some("Dock Connector".into()), false);
+        self.insert_block(g, IVec3::new(-4, 2, 0), rot(IVec3::X, IVec3::Y), BlockKind::MergeBlock, None, Some("Dock Merge Block".into()), false);
         g
     }
 
