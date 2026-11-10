@@ -1,0 +1,17 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shared.workspace = true
+server.workspace = true
+glam.workspace = true
+postcard.workspace = true
+renet.workspace = true
+renet_netcode.workspace = true
+godot = { workspace = true, features = ["api-4-7"] }
+log.workspace = true

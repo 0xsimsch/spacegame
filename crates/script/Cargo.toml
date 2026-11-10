@@ -1,0 +1,9 @@
+[package]
+name = "script"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared.workspace = true
+glam.workspace = true
+mlua.workspace = true

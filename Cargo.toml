@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/shared", "crates/sim", "crates/script", "crates/server", "crates/client"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+shared = { path = "crates/shared" }
+sim = { path = "crates/sim" }
+script = { path = "crates/script" }
+server = { path = "crates/server" }
+glam = { version = "0.33", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+rapier3d-f64 = "0.36"
+renet = "2.0"
+renet_netcode = "2.0"
+mlua = { version = "0.12", features = ["luau", "vendored", "send"] }
+godot = "0.5"
+rayon = "1"
+log = "0.4"
+env_logger = "0.11"
+
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 3

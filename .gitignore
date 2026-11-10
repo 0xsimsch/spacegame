@@ -1,0 +1,5 @@
+/target
+/godot/.godot/
+/godot/bin/
+*.save
+*.import

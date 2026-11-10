@@ -1,0 +1,14 @@
+[package]
+name = "sim"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared.workspace = true
+script.workspace = true
+glam.workspace = true
+serde.workspace = true
+postcard.workspace = true
+rapier3d-f64.workspace = true
+rayon.workspace = true
+log.workspace = true
