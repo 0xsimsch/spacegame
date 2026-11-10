@@ -543,7 +543,7 @@ impl GameServer {
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
                      /spawn <ship|shuttle|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
-                     /save - save the world\n/where - show your position",
+                     /sit [cockpit name] - sit in the nearest free cockpit (60 m)\n/save - save the world\n/where - show your position",
                 );
                 Ok(())
             }
@@ -601,6 +601,11 @@ impl GameServer {
                 };
                 self.world.spawn_prefab(what, at, rot, script.as_deref());
                 Ok(())
+            }
+            "sit" => {
+                let name = (!args.is_empty()).then(|| args.join(" "));
+                let seat = self.world.nearest_free_seat(pid, 60.0, name.as_deref()).ok_or("no free cockpit within 60 m")?;
+                self.world.enter_seat_unchecked(pid, seat)
             }
             "save" => {
                 self.save();

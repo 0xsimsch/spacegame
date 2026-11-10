@@ -356,6 +356,24 @@ impl World {
     pub fn enter_seat(&mut self, player: PlayerId, block: BlockId) -> Result<(), String> {
         let pos = self.block_world_pos(block).ok_or("no such block")?;
         self.check_reach(player, pos)?;
+        self.enter_seat_unchecked(player, block)
+    }
+
+    /// Nearest free cockpit within `range` metres of the player.
+    pub fn nearest_free_seat(&self, player: PlayerId, range: f64, name: Option<&str>) -> Option<BlockId> {
+        let p = self.player_pos(player)?;
+        self.grids
+            .values()
+            .flat_map(|g| g.blocks.values())
+            .filter(|b| matches!(b.state, BlockState::Cockpit { pilot: None }))
+            .filter(|b| name.is_none_or(|n| b.name.eq_ignore_ascii_case(n)))
+            .filter_map(|b| self.block_world_pos(b.id).map(|w| (b.id, (w - p).length())))
+            .filter(|(_, d)| *d <= range)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
+    pub fn enter_seat_unchecked(&mut self, player: PlayerId, block: BlockId) -> Result<(), String> {
         if self.players.get(&player).and_then(|p| p.seat).is_some() {
             return Err("already seated".into());
         }

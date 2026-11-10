@@ -71,6 +71,32 @@ func _run() -> void:
 	game.debug_look_at_block("Gyroscope", 0.0)
 	await _wait(0.3)
 	await _shot("02g_shuttle")
+	# Cockpit views: first person, third person, zoomed out.
+	game.send_chat("/sit")
+	await _wait(1.0)
+	await _shot("02i_cockpit_first")
+	game.debug_key("V")
+	await _wait(0.5)
+	await _shot("02j_cockpit_third")
+	game.debug_zoom(8)
+	await _wait(0.3)
+	await _shot("02k_cockpit_zoomed")
+	game.debug_zoom(-8)
+	game.debug_key("V")
+	game.debug_key("F")
+	await _wait(1.0)
+	game.send_chat("/sit Shuttle Cockpit")
+	await _wait(1.0)
+	await _shot("02l_shuttle_first")
+	game.debug_key("V")
+	await _wait(0.5)
+	await _shot("02m_shuttle_third")
+	game.debug_key("V")
+	game.debug_key("F")
+	await _wait(1.0)
+	# Back to open space above the spawn for the building checks.
+	game.send_chat("/tp earth")
+	await _wait(1.5)
 	# Open the side door and the ramp from the flight computer, then look again.
 	for gid in game.debug_grid_ids():
 		for blk in game.grid_blocks(gid):

@@ -8,6 +8,7 @@ J jetpack on/off (off = walk on planets, Space jumps)
 Z inertial dampeners, X cruise mode (raises speed cap to 5 km/s)
 G build mode: 1-9 or mouse wheel pick block (5 rotor, 8 gyroscope, 9 door), R/T rotate, B ship/station
     LMB place (on a block, or in empty space to start a new grid), RMB remove
+V first/third person (third person: mouse wheel zooms, up to 300 m when seated)
 F use: sit in cockpit / open-close door / edit programmable block / control a block
 K control panel of the grid you look at (or are seated in)
 Enter chat & commands (/help, /tp moon, /spawn ship hover, /save)

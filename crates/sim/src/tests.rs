@@ -149,7 +149,7 @@ fn acceptance_hover_on_moon() {
     let p = w.phys.bodies[w.grids[&g].body].translation();
     let alt = gravity_at(p).altitude;
     assert!((alt - 25.0).abs() < 1.0, "altitude {alt}");
-    let pb = w.grids[&g].blocks[&IVec3::Y].id;
+    let pb = w.grids[&g].blocks[&IVec3::ZERO].id;
     w.run_script(pb, "40").unwrap();
     run(&mut w, 20.0);
     let alt = gravity_at(w.phys.bodies[w.grids[&g].body].translation()).altitude;
@@ -161,7 +161,7 @@ fn acceptance_hover_on_moon() {
 fn runaway_script_is_contained() {
     let mut w = World::new();
     let g = w.spawn_prefab("ship", deep_space(), DQuat::IDENTITY, None).unwrap();
-    let pb = w.grids[&g].blocks[&IVec3::Y].id;
+    let pb = w.grids[&g].blocks[&IVec3::ZERO].id;
     w.upload_script(pb, "function tick() while true do end end").unwrap();
     w.step();
     let t = std::time::Instant::now();
@@ -187,7 +187,7 @@ fn cockpit_flies_ship() {
     w.teleport_player(1, deep_space() + DVec3::Z * 3.0);
     let g = w.spawn_prefab("ship", deep_space(), DQuat::IDENTITY, None).unwrap();
     let _ = start;
-    let cockpit = w.grids[&g].blocks[&IVec3::ZERO].id;
+    let cockpit = w.grids[&g].blocks[&IVec3::Y].id;
     w.enter_seat(1, cockpit).unwrap();
     w.set_input(1, PlayerInput { seq: 1, movement: shared::Vec3::new(0.0, 0.0, -1.0), dampeners: true, look: DQuat::IDENTITY, ..Default::default() });
     run(&mut w, 2.0);

@@ -34,6 +34,7 @@ Tests: `cargo test --workspace` (28 tests, including the three acceptance script
 | F | sit in cockpit / open or close a door / edit programmable block / control panel of a block; F again to stand up |
 | K | control panel of the grid you look at or sit in |
 | Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <shuttle\|arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
+| V | first / third person; in third person the mouse wheel zooms (seated: chase camera fixed to the seat, 3-300 m) |
 | F1 / F3 / Esc | help, stats overlay, menu |
 
 ## Demo park

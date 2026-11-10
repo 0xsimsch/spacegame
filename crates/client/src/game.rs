@@ -42,6 +42,7 @@ fn quat(q: DQuat) -> Quaternion {
 }
 
 struct BlockNode {
+    root: Gd<Node3D>,
     flame: Option<Gd<Node3D>>,
     shaft: Option<Gd<Node3D>>,
     door: Option<Gd<Node3D>>,
@@ -83,6 +84,12 @@ pub struct SpaceGame {
     input_accum: f64,
     status: String,
     cam_world: DVec3,
+    /// Eye position: building, interaction and raycasts aim from here.
+    eye_world: DVec3,
+    third_person: bool,
+    /// Third-person camera distance (seated / on foot), zoomed with the wheel.
+    seat_cam_dist: f64,
+    foot_cam_dist: f64,
     show_stats: bool,
     fps: f64,
 }
@@ -119,6 +126,10 @@ impl INode3D for SpaceGame {
             input_accum: 0.0,
             status: "Not connected".into(),
             cam_world: DVec3::ZERO,
+            eye_world: DVec3::ZERO,
+            third_person: false,
+            seat_cam_dist: 16.0,
+            foot_cam_dist: 4.0,
             show_stats: false,
             fps: 60.0,
         }
@@ -220,8 +231,16 @@ impl INode3D for SpaceGame {
                 match b.get_button_index() {
                     MouseButton::LEFT if self.build_mode => self.place(),
                     MouseButton::RIGHT if self.build_mode => self.remove(),
-                    MouseButton::WHEEL_UP if self.build_mode => self.build_kind = (self.build_kind + BUILDABLE.len() - 1) % BUILDABLE.len(),
-                    MouseButton::WHEEL_DOWN if self.build_mode => self.build_kind = (self.build_kind + 1) % BUILDABLE.len(),
+                    MouseButton::WHEEL_UP if self.build_mode && !(self.third_person && self.st.my_seat().is_some()) => self.build_kind = (self.build_kind + BUILDABLE.len() - 1) % BUILDABLE.len(),
+                    MouseButton::WHEEL_DOWN if self.build_mode && !(self.third_person && self.st.my_seat().is_some()) => self.build_kind = (self.build_kind + 1) % BUILDABLE.len(),
+                    MouseButton::WHEEL_UP | MouseButton::WHEEL_DOWN if self.third_person => {
+                        let f = if b.get_button_index() == MouseButton::WHEEL_UP { 1.0 / 1.15 } else { 1.15 };
+                        if self.st.my_seat().is_some() {
+                            self.seat_cam_dist = (self.seat_cam_dist * f).clamp(3.0, 300.0);
+                        } else {
+                            self.foot_cam_dist = (self.foot_cam_dist * f).clamp(1.5, 60.0);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -241,6 +260,7 @@ impl INode3D for SpaceGame {
                 Key::T => self.build_rot = orient::cycle_up(self.build_rot),
                 Key::F => self.interact(),
                 Key::K => self.open_panel_for_target(),
+                Key::V => self.third_person = !self.third_person,
                 k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6 | Key::KEY_7 | Key::KEY_8 | Key::KEY_9) => {
                     self.build_kind = (k.ord() - Key::KEY_1.ord()) as usize;
                     self.build_mode = true;
@@ -379,7 +399,7 @@ impl SpaceGame {
     }
 
     fn target(&self) -> Option<RayHit> {
-        self.st.raycast(self.cam_world, self.look * orient::FORWARD, REACH)
+        self.st.raycast(self.eye_world, self.look * orient::FORWARD, REACH, self.st.my_seat())
     }
 
     fn place(&mut self) {
@@ -390,7 +410,7 @@ impl SpaceGame {
                 self.send(ClientMsg::PlaceBlock { grid: hit.grid, cell, rot: self.build_rot, kind });
             }
             None => {
-                let pos = self.cam_world + self.look * orient::FORWARD * 4.0;
+                let pos = self.eye_world + self.look * orient::FORWARD * 4.0;
                 let rot = self.look * orient::quat(self.build_rot).inverse() * orient::quat(orient::from_axes(IVec3::NEG_Z, IVec3::Y).unwrap());
                 let rot = self.snap_new_grid_rot(pos, rot);
                 self.send(ClientMsg::NewGrid { pos, rot, kind, is_static: self.build_static });
@@ -454,14 +474,27 @@ impl SpaceGame {
     // -------------------------------------------------------------- render
 
     fn update_camera(&mut self) {
-        let seat = self.st.my_seat();
-        let (pos, rot) = match seat.and_then(|s| self.st.block_world_pose(s)) {
-            Some(p) => (p.pos + p.rot * DVec3::new(0.0, 0.25, 0.0), p.rot),
+        let seat_pose = self.st.my_seat().and_then(|s| self.st.block_world_pose(s));
+        // Eye: where the pilot / character looks from.
+        let (eye, eye_rot, up) = match seat_pose {
+            // At the front face of the seat block, so the hull around it stays out of view.
+            Some(p) => (p.pos + p.rot * DVec3::new(0.0, 0.1, -0.42), p.rot, p.rot * orient::UP),
             None => {
                 let p = self.st.my_render_pos().unwrap_or_default();
                 let up = self.gravity_up(p).unwrap_or(self.look * orient::UP);
-                (p + up * 0.6, self.look)
+                (p + up * 0.6, self.look, up)
             }
+        };
+        self.eye_world = eye;
+        let (pos, rot) = if !self.third_person {
+            (eye, eye_rot)
+        } else if let Some(p) = seat_pose {
+            // Chase camera fixed to the seat: behind and above, pitched down a bit.
+            let rot = p.rot * DQuat::from_rotation_x(-0.22);
+            (p.pos + rot * DVec3::new(0.0, 0.0, self.seat_cam_dist) + up * (self.seat_cam_dist * 0.08), rot)
+        } else {
+            // Over the shoulder, following the look direction.
+            (eye + self.look * DVec3::new(0.35, 0.3, self.foot_cam_dist), self.look)
         };
         self.cam_world = pos;
         if let Some(cam) = &mut self.camera {
@@ -492,6 +525,7 @@ impl SpaceGame {
             self.st.grids.get_mut(&id).unwrap().dirty = false;
         }
         // Grid transforms and animated parts.
+        let hide_seat = if self.third_person { None } else { self.st.my_seat() };
         let ids: Vec<GridId> = self.grid_nodes.keys().copied().collect();
         for id in ids {
             let Some(pose) = self.st.grid_pose(id) else { continue };
@@ -499,6 +533,8 @@ impl SpaceGame {
             node.root.set_position(v3(pose.pos - cam));
             node.root.set_quaternion(quat(pose.rot));
             for (bid, bn) in node.blocks.iter_mut() {
+                // In first person the camera sits inside the seat block: hide it.
+                bn.root.set_visible(!(hide_seat == Some(*bid)));
                 let v = self.st.values.get(bid).copied().unwrap_or(0.0);
                 if let Some(f) = &mut bn.flame {
                     f.set_visible(v > 0.01);
@@ -599,7 +635,7 @@ impl SpaceGame {
             // Cylinders are along Y; this turns them along -Z/+Z.
             let along_z = Quaternion::from_axis_angle(Vector3::RIGHT, std::f32::consts::FRAC_PI_2);
             let along_x = Quaternion::from_axis_angle(Vector3::BACK, std::f32::consts::FRAC_PI_2);
-            let mut node = BlockNode { flame: None, shaft: None, door: None };
+            let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None };
             let sphere: Gd<Mesh> = vis.sphere.clone().upcast();
             match b.kind {
                 BlockKind::Thruster => {
@@ -659,7 +695,8 @@ impl SpaceGame {
 
     fn update_players(&mut self, cam: DVec3) {
         let me = self.st.me;
-        let ids: Vec<PlayerId> = self.st.players.keys().copied().filter(|p| Some(*p) != me).collect();
+        let show_me = self.third_person && self.st.my_seat().is_none();
+        let ids: Vec<PlayerId> = self.st.players.keys().copied().filter(|p| Some(*p) != me || show_me).collect();
         self.player_nodes.retain(|id, n| {
             let keep = ids.contains(id);
             if !keep {
@@ -668,7 +705,13 @@ impl SpaceGame {
             keep
         });
         for id in ids {
-            let Some((pos, look, seat)) = self.st.player_state(id) else { continue };
+            let state = if Some(id) == me {
+                // Own avatar: predicted position and local look.
+                self.st.my_render_pos().map(|p| (p, self.look, None))
+            } else {
+                self.st.player_state(id)
+            };
+            let Some((pos, look, seat)) = state else { continue };
             if !self.player_nodes.contains_key(&id) {
                 let vis = self.vis.as_ref().unwrap();
                 let mut root = Node3D::new_alloc();
@@ -726,7 +769,7 @@ impl SpaceGame {
                 (gp.transform(cell.as_dvec3()), gp.rot * orient::quat(self.build_rot))
             }
             None => {
-                let pos = self.cam_world + self.look * orient::FORWARD * 4.0;
+                let pos = self.eye_world + self.look * orient::FORWARD * 4.0;
                 let rot = self.snap_new_grid_rot(pos, self.look);
                 (pos, rot)
             }
@@ -1021,7 +1064,8 @@ impl SpaceGame {
             onoff(self.cruise)
         );
         if seat.is_some() {
-            s += "Piloting: WASD/Space/C move, mouse pitch/yaw, Q/E roll, [F] leave seat, [K] control panel\n";
+            s += "Piloting: WASD/Space/C move, mouse pitch/yaw, Q/E roll, [F] leave seat, [K] control panel, [V] camera";
+            s += if self.third_person { " (wheel: zoom)\n" } else { "\n" };
         } else if self.build_mode {
             let kind = BUILDABLE[self.build_kind];
             let f = orient::forward(self.build_rot);
@@ -1032,7 +1076,7 @@ impl SpaceGame {
                 if self.build_static { "STATION (static)" } else { "SHIP (dynamic)" }
             );
         } else {
-            s += "[G] build mode  [F] use  [K] control panel  [Enter] chat  [F1] help\n";
+            s += "[G] build mode  [F] use  [K] control panel  [V] 1st/3rd person  [Enter] chat  [F1] help\n";
         }
         if let Some(hit) = &self.last_hit {
             if let Some((_, b)) = self.st.block(hit.block) {
@@ -1147,6 +1191,7 @@ impl SpaceGame {
     fn debug_key(&mut self, key: GString) {
         let k = match key.to_string().as_str() {
             "F" => Key::F,
+            "V" => Key::V,
             "G" => Key::G,
             "J" => Key::J,
             other => {
@@ -1161,6 +1206,14 @@ impl SpaceGame {
         self.ui_open = false;
         self.unhandled_input(ev.upcast());
         self.ui_open = was;
+    }
+
+    /// For automated tests: zoom the third-person camera (positive = out).
+    #[func]
+    fn debug_zoom(&mut self, steps: i64) {
+        let f = 1.15f64.powi(steps as i32);
+        self.seat_cam_dist = (self.seat_cam_dist * f).clamp(3.0, 300.0);
+        self.foot_cam_dist = (self.foot_cam_dist * f).clamp(1.5, 60.0);
     }
 
     #[func]

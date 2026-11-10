@@ -37,8 +37,10 @@ impl World {
         let b = |w: &mut World, cell: IVec3, r: u8, k: BlockKind, name: Option<&str>| {
             w.insert_block(g, cell, r, k, None, name.map(String::from), false)
         };
-        b(self, IVec3::ZERO, ident, BlockKind::Cockpit, None);
-        let pb = b(self, IVec3::Y, ident, BlockKind::Programmable, Some("Flight Computer"));
+        // Cockpit on top (clear view forward), flight computer in the middle;
+        // both weigh the same, so the centre of mass stays on the thrust axes.
+        b(self, IVec3::Y, ident, BlockKind::Cockpit, None);
+        let pb = b(self, IVec3::ZERO, ident, BlockKind::Programmable, Some("Flight Computer"));
         b(self, IVec3::NEG_Y, rot(IVec3::NEG_Y, IVec3::Z), BlockKind::Thruster, Some("Down Thruster"));
         // Lifters on the four corners.
         for (i, (x, z)) in [(1, 1), (-1, 1), (1, -1), (-1, -1)].into_iter().enumerate() {

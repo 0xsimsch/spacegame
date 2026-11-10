@@ -323,7 +323,8 @@ impl ClientState {
     // ------------------------------------------------------- raycast
 
     /// First block hit along a ray (world space).
-    pub fn raycast(&self, origin: DVec3, dir: DVec3, max: f64) -> Option<RayHit> {
+    /// `skip`: a block the ray ignores (the seat you are sitting in).
+    pub fn raycast(&self, origin: DVec3, dir: DVec3, max: f64, skip: Option<BlockId>) -> Option<RayHit> {
         let mut best: Option<RayHit> = None;
         for g in self.grids.values() {
             let Some(pose) = self.grid_pose(g.id) else { continue };
@@ -332,7 +333,8 @@ impl ClientState {
             }
             let o = pose.inverse_transform(origin);
             let d = pose.rot.inverse() * dir;
-            if let Some((cell, normal, dist)) = grid_dda(&g.blocks, o, d, max) {
+            let skip_cell = skip.and_then(|s| g.by_id.get(&s).copied());
+            if let Some((cell, normal, dist)) = grid_dda(&g.blocks, o, d, max, skip_cell) {
                 if best.as_ref().is_none_or(|b| dist < b.dist) {
                     best = Some(RayHit { grid: g.id, cell, normal, dist, block: g.blocks[&cell].id, kind: g.blocks[&cell].kind });
                 }
@@ -423,7 +425,7 @@ use sim as sim_consts;
 
 /// Amanatides–Woo voxel traversal in grid-local space (cells are unit cubes
 /// centred on integer coordinates). Returns (cell, entry normal, distance).
-fn grid_dda(blocks: &HashMap<IVec3, BlockData>, o: DVec3, d: DVec3, max: f64) -> Option<(IVec3, IVec3, f64)> {
+fn grid_dda(blocks: &HashMap<IVec3, BlockData>, o: DVec3, d: DVec3, max: f64, skip: Option<IVec3>) -> Option<(IVec3, IVec3, f64)> {
     let d = d.normalize();
     let p = o + DVec3::splat(0.5);
     let mut cell = p.floor().as_ivec3();
@@ -445,7 +447,7 @@ fn grid_dda(blocks: &HashMap<IVec3, BlockData>, o: DVec3, d: DVec3, max: f64) ->
     let mut guard = 0;
     while t <= max && guard < 4096 {
         guard += 1;
-        if blocks.contains_key(&cell) {
+        if blocks.contains_key(&cell) && Some(cell) != skip {
             return Some((cell, normal, t));
         }
         if t_max.x < t_max.y && t_max.x < t_max.z {
@@ -481,12 +483,12 @@ mod tests {
         let mut blocks = HashMap::new();
         blocks.insert(IVec3::new(0, 0, 0), block(IVec3::ZERO));
         blocks.insert(IVec3::new(1, 0, 0), block(IVec3::X));
-        let (c, n, t) = grid_dda(&blocks, DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, 10.0).unwrap();
+        let (c, n, t) = grid_dda(&blocks, DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, 10.0, None).unwrap();
         assert_eq!((c, n), (IVec3::ZERO, IVec3::Z));
         assert!((t - 4.5).abs() < 1e-9);
-        let (c, n, _) = grid_dda(&blocks, DVec3::new(5.0, 0.2, 0.1), DVec3::NEG_X, 10.0).unwrap();
+        let (c, n, _) = grid_dda(&blocks, DVec3::new(5.0, 0.2, 0.1), DVec3::NEG_X, 10.0, None).unwrap();
         assert_eq!((c, n), (IVec3::X, IVec3::X));
-        assert!(grid_dda(&blocks, DVec3::new(0.0, 3.0, 0.0), DVec3::Y, 10.0).is_none());
+        assert!(grid_dda(&blocks, DVec3::new(0.0, 3.0, 0.0), DVec3::Y, 10.0, None).is_none());
     }
 
     /// The client's movement prediction must track the authoritative simulation.
