@@ -21,7 +21,7 @@ cargo run --release -p server --bin bot -- --addr 127.0.0.1:47800 --count 4 --se
 Client command-line options (after `--`): `--host`, `--join HOST:PORT`, `--name N`,
 `--port P`, `--autotest [--shots DIR] [--expect-players N]`.
 
-Tests: `cargo test --workspace` (31 tests, including the three acceptance scripts) and
+Tests: `cargo test --workspace` (32 tests, including the three acceptance scripts) and
 `godot --headless --path godot -- --autotest --host --port 47891` (end-to-end client smoke test).
 
 ## Controls
@@ -33,7 +33,7 @@ Tests: `cargo test --workspace` (31 tests, including the three acceptance script
 | G | build mode: 1-9, 0 / wheel pick block (5 rotor, 8 gyroscope, 9 door, 0 sensor), R/T rotate, B ship/station, LMB place, RMB remove |
 | F | sit in cockpit / open or close a door / edit programmable block / control panel of a block; F again to stand up |
 | K | control panel of the grid you look at or sit in |
-| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <shuttle\|drone\|arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
+| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <shuttle\|frigate\|drone\|arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
 | V | first / third person; in third person the mouse wheel zooms (seated: chase camera fixed to the seat, 3-300 m) |
 | F1 / F3 / Esc | help, stats overlay, menu |
 
@@ -51,6 +51,7 @@ driven by its own programmable block; open it with F to read or change the scrip
 | Carousel | rotor → hub with 4 arms → swing hinges → gondolas with seats | spins up, slows, reverses; the swing hinges are free, so the gondolas swing out from real centrifugal force. Run `motor` to drive them to atan(ω²r/g) instead. Sit in one with F |
 | Shuttle | 5×4×7 walk-in hull: cockpit, side door, rear ramp on a hinge, 4 piston landing legs, 18 thrusters on all six sides, gyroscope | the "Shuttle Computer" autopilot. Run with `takeoff`, `hover 60`, `land` (lands and opens the ramp), `level`, `off` (manual), `ramp`, `door`. It keeps itself level with the gyroscope |
 | Drawbridge | wall → hinge → 3×6 deck | opens/closes every 8 s. Run with `open`, `close` or `auto` |
+| Frigate | 4,242 parts: 17×9×61 m hollow hull with a tapered nose, two decks joined by a hatch, bulkheads, bridge cockpit in the nose, 4 airlocks, a 5×3 rear cargo door, 543 thrusters (253 lift, T/W 1.7 on Earth), 4 gyroscopes, a sensor and two rotor+hinge turrets on the roof | the "Frigate Computer" points both turrets at the nearest player outside the hull (300 m sensor). Run with `track`, `park`, `airlocks`, `cargo`. Fly it from the "Frigate Bridge" cockpit. `/spawn frigate` puts one 45 m in front of you |
 | Drone | quad layout: 4 corner lift thrusters, one thruster per other direction, gyroscope, sensor on top | the "Drone Computer" follows the nearest player its sensor sees (150 m), 5 m away and 3 m up, facing them. Run with `follow`, `follow <name>`, `stay`, `off`, `distance 8`, `height 5`. `/spawn drone` makes another |
 
 Mechanical joints are Rapier multibody (reduced-coordinate) joints, so long chains stay stiff.
@@ -107,7 +108,8 @@ Key design points:
   mechanical group.
 - **Network**: server-authoritative over renet/UDP. Snapshots go out at 30 Hz, other grids are
   interpolated 100 ms in the past, and the local player is predicted and reconciled. Each client
-  only receives grids and players within 20 km.
+  only receives grids and players within 20 km. Block values (thruster output, joint positions, ...)
+  are only sent when they change, with a full refresh every 2 s.
 
 ## Milestone status
 
@@ -123,6 +125,8 @@ Key design points:
 ## Known limitations (deliberately out of scope for the prototype)
 
 - Planets do not orbit. There is no grid splitting, damage, power or inventory.
-- One box collider per block (no box merging); one mesh node per block (no MultiMesh yet).
+- One box collider per block (no box merging). Rendering batches every non-animated block part into
+  one MultiMesh per mesh/material and grid; only flames, piston shafts, door panels, sensor eyes and
+  cockpits are separate nodes.
 - Prediction ignores collisions (it is corrected by the server state on every snapshot).
 - Block default names are numbered per grid, so sub-grids can repeat names (rename them in the panel).

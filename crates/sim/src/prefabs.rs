@@ -5,7 +5,8 @@ use shared::BlockId;
 use shared::examples;
 use shared::orient::from_axes;
 
-pub const NAMES: [&str; 10] = ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle", "drone"];
+pub const NAMES: [&str; 11] =
+    ["ship", "arm", "pad", "elevator", "crane", "robot", "bridge", "carousel", "shuttle", "drone", "frigate"];
 
 fn rot(fwd: IVec3, up: IVec3) -> u8 {
     from_axes(fwd, up).expect("valid axes")
@@ -26,6 +27,7 @@ impl World {
             "carousel" => Some(self.spawn_carousel(pos, orientation)),
             "shuttle" => Some(self.spawn_shuttle(pos, orientation)),
             "drone" => Some(self.spawn_drone(pos, orientation)),
+            "frigate" => Some(self.spawn_frigate(pos, orientation)),
             _ => None,
         }
     }
@@ -307,6 +309,143 @@ impl World {
         b(self, IVec3::new(-1, 0, 0), rot(IVec3::X, IVec3::Y), BlockKind::Thruster, "Right Thruster");
         b(self, IVec3::NEG_Y, rot(IVec3::NEG_Y, IVec3::Z), BlockKind::Thruster, "Down Thruster");
         let _ = self.upload_script(pb, &examples::drone_follow());
+        g
+    }
+
+    /// A 17 x 9 x 61 m walk-in frigate (about 4,200 blocks): a hollow armour hull
+    /// with a tapered nose, two decks joined by a hatch, a bridge cockpit in
+    /// the nose, airlocks on both sides, a rear cargo door, two sensor-guided
+    /// turrets on the roof and hundreds of thrusters on all six sides.
+    ///
+    /// Grid frame: -Z forward, +Y up, the origin is the floor centre. The lift
+    /// thrusters hang 1.5 m below the floor, so spawn it 1.6 m above ground.
+    fn spawn_frigate(&mut self, pos: DVec3, orientation: DQuat) -> GridId {
+        // Hull volume: main body z -20..30, nose tapering to 5 x 4 m at z = -30.
+        fn half_width(z: i32) -> i32 {
+            if z >= -20 { 8 } else { 2 + (z + 30) / 3 }
+        }
+        fn height(z: i32) -> i32 {
+            if z >= -20 { 8 } else { 3 + (z + 30) / 2 }
+        }
+        fn inside(c: IVec3) -> bool {
+            (-30..=30).contains(&c.z) && c.y >= 0 && c.y <= height(c.z) && c.x.abs() <= half_width(c.z)
+        }
+        const DIRS: [IVec3; 6] = [IVec3::X, IVec3::NEG_X, IVec3::Y, IVec3::NEG_Y, IVec3::Z, IVec3::NEG_Z];
+        let g = self.create_grid(pos, orientation, false, None);
+        let ident = rot(IVec3::NEG_Z, IVec3::Y);
+
+        // Special cells in the shell.
+        let cockpit = IVec3::new(0, 2, -30);
+        let mut doors: Vec<(IVec3, u8, String)> = Vec::new();
+        for (side, x) in [("Port", -8), ("Starboard", 8)] {
+            for (lvl, y) in [("Lower", 1), ("Upper", 2)] {
+                for z in [-2, 14] {
+                    let n = if z < 0 { "Fore" } else { "Aft" };
+                    doors.push((IVec3::new(x, y, z), rot(IVec3::new(x.signum(), 0, 0), IVec3::Y), format!("{side} {n} Airlock {lvl}")));
+                }
+            }
+        }
+        let mut n = 0;
+        for y in 1..=3 {
+            for x in -2..=2 {
+                n += 1;
+                doors.push((IVec3::new(x, y, 30), rot(IVec3::Z, IVec3::Y), format!("Cargo Door {n}")));
+            }
+        }
+        let special: HashSet<IVec3> = doors.iter().map(|d| d.0).chain([cockpit]).collect();
+
+        // Shell, plus the deck between the two levels (with a hatch).
+        let mut armor = Vec::new();
+        for z in -30..=30 {
+            for y in 0..=height(z) {
+                for x in -half_width(z)..=half_width(z) {
+                    let c = IVec3::new(x, y, z);
+                    let shell = DIRS.iter().any(|d| !inside(c + *d));
+                    let deck = y == 4 && z >= -20 && z < 30 && !((-1..=0).contains(&x) && (8..=9).contains(&z));
+                    if (shell || deck) && !special.contains(&c) {
+                        armor.push(c);
+                    }
+                }
+            }
+        }
+        // Interior bulkheads on the lower deck with a 3-wide passage.
+        for z in [-12, 4, 20] {
+            for x in -7i32..=7 {
+                for y in 1..=3 {
+                    if x.abs() > 1 {
+                        armor.push(IVec3::new(x, y, z));
+                    }
+                }
+            }
+        }
+        self.armor(g, armor);
+        let b = |w: &mut World, cell: IVec3, r: u8, k: BlockKind, name: &str| {
+            w.insert_block(g, cell, r, k, None, Some(name.to_string()), false)
+        };
+        b(self, cockpit, ident, BlockKind::Cockpit, "Frigate Bridge");
+        for (cell, r, name) in &doors {
+            b(self, *cell, *r, BlockKind::Door, name);
+        }
+        let pb = b(self, IVec3::new(-2, 1, -24), ident, BlockKind::Programmable, "Frigate Computer");
+        for (i, c) in [(-6, -16), (6, -16), (-6, 26), (6, 26)].into_iter().enumerate() {
+            b(self, IVec3::new(c.0, 1, c.1), ident, BlockKind::Gyro, &format!("Frigate Gyro {}", i + 1));
+        }
+        b(self, IVec3::new(0, 9, -16), ident, BlockKind::Sensor, "Frigate Sensor");
+
+        // Thrusters: a thruster pushing along `f` sits outside the hull with
+        // the hull at `c + f` and free space behind its nozzle at `c - f`.
+        let reserved = |c: IVec3| {
+            // Keep the cockpit view, the airlocks, the cargo door and the turrets clear.
+            (c.z <= -31 && c.x.abs() <= 1 && (1..=3).contains(&c.y))
+                || (c.x.abs() >= 9 && (c.z == -2 || c.z == 14) && c.y <= 3)
+                || (c.z >= 31 && c.x.abs() <= 3 && c.y <= 4)
+                || (c.y >= 9 && c.x.abs() <= 2 && ((-10..=-6).contains(&c.z) || (18..=22).contains(&c.z) || c.z == -16))
+        };
+        let pattern = |f: IVec3, c: IVec3| match (f.x, f.y, f.z) {
+            (0, 1, 0) => c.x.rem_euclid(2) == 0 && c.z.rem_euclid(2) == 0, // lift: every other cell under the belly
+            (0, -1, 0) => c.x.rem_euclid(4) == 0 && c.z.rem_euclid(4) == 0,
+            (0, 0, -1) => c.x.rem_euclid(2) == 0 && c.y.rem_euclid(2) == 0, // main engines on the stern
+            (0, 0, 1) => (c.x + c.y).rem_euclid(2) == 0,                    // retro thrusters on the nose and shoulders
+            _ => c.y.rem_euclid(3) == 1 && c.z.rem_euclid(3) == 0,          // lateral
+        };
+        let mut placed: HashSet<IVec3> = HashSet::new();
+        let mut counts: HashMap<IVec3, usize> = HashMap::new();
+        for f in DIRS {
+            let mut cells = Vec::new();
+            for z in -32..=32 {
+                for y in -1..=10 {
+                    for x in -10..=10 {
+                        let c = IVec3::new(x, y, z);
+                        if !inside(c) && inside(c + f) && !inside(c - f) && !reserved(c) && pattern(f, c) && !placed.contains(&c) {
+                            cells.push(c);
+                        }
+                    }
+                }
+            }
+            let name = match (f.x, f.y, f.z) {
+                (0, 1, 0) => "Lift",
+                (0, -1, 0) => "Down",
+                (0, 0, -1) => "Main",
+                (0, 0, 1) => "Retro",
+                (1, 0, 0) => "Starboard",
+                _ => "Port",
+            };
+            let up = if f.y == 0 { IVec3::Y } else { IVec3::Z };
+            for (i, c) in cells.into_iter().enumerate() {
+                placed.insert(c);
+                *counts.entry(f).or_default() += 1;
+                b(self, c, rot(f, up), BlockKind::Thruster, &format!("{name} Thruster {}", i + 1));
+            }
+        }
+
+        // Two turrets: rotor (yaw) -> housing -> hinge (pitch) -> barrel.
+        for (i, z) in [(1, -8), (2, 20)] {
+            let (_, head) = self.mech(g, IVec3::new(0, 9, z), IVec3::Y, IVec3::Z, BlockKind::Rotor, &format!("Turret {i} Rotor"));
+            self.armor(head, [IVec3::new(1, 0, 0), IVec3::new(-1, 0, 0), IVec3::new(1, 1, 0), IVec3::new(-1, 1, 0), IVec3::new(0, 0, 1), IVec3::new(0, 0, -1)]);
+            let (_, barrel) = self.mech(head, IVec3::Y, IVec3::Y, IVec3::Z, BlockKind::Hinge, &format!("Turret {i} Hinge"));
+            self.armor(barrel, (1..=4).map(|y| IVec3::new(0, y, 0)));
+        }
+        let _ = self.upload_script(pb, &examples::FRIGATE);
         g
     }
 

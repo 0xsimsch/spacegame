@@ -8,9 +8,10 @@ use godot::classes::geometry_instance_3d::ShadowCastingSetting;
 use godot::classes::input::MouseMode;
 use godot::classes::{
     ArrayMesh, Camera3D, DirectionalLight3D, Environment, INode3D, Input, InputEvent, InputEventKey,
-    InputEventMouseButton, InputEventMouseMotion, Label3D, Mesh, MeshInstance3D, Node3D, ProjectSettings, Sky,
-    WorldEnvironment,
+    InputEventMouseButton, InputEventMouseMotion, Label3D, Mesh, MeshInstance3D, MultiMesh, MultiMeshInstance3D, Node3D,
+    ProjectSettings, Sky, StandardMaterial3D, WorldEnvironment,
 };
+use godot::classes::multi_mesh::TransformFormat;
 use godot::global::{Key, MouseButton};
 use godot::prelude::*;
 use shared::blocks::{BUILDABLE, BlockKind};
@@ -617,93 +618,132 @@ impl SpaceGame {
         };
         let vis = self.vis.as_ref().unwrap();
         let mut blocks = HashMap::new();
+        // Parts that never move relative to their grid are batched into one
+        // MultiMesh per (mesh, material): a few draw calls per grid instead of
+        // several per block. Animated parts (flames, shafts, door panels,
+        // sensor eyes) and cockpits (hidden in first person) stay nodes.
+        let mut batches: HashMap<(i64, i64), (Gd<Mesh>, Gd<StandardMaterial3D>, Vec<Transform3D>)> = HashMap::new();
         let g = &self.st.grids[&id];
+        let add = |parent: &mut Gd<Node3D>, mesh: &Gd<Mesh>, mat: &Gd<StandardMaterial3D>, pos: Vector3, scale: Vector3, rot: Option<Quaternion>| {
+            let mut mi = MeshInstance3D::new_alloc();
+            mi.set_mesh(mesh);
+            mi.set_material_override(mat);
+            mi.set_position(pos);
+            mi.set_scale(scale);
+            if let Some(r) = rot {
+                mi.set_quaternion(r);
+            }
+            parent.add_child(&mi);
+            mi.upcast::<Node3D>()
+        };
+        let cube: Gd<Mesh> = vis.cube.clone().upcast();
+        let cyl: Gd<Mesh> = vis.cylinder.clone().upcast();
+        let nozzle: Gd<Mesh> = vis.nozzle.clone().upcast();
+        let sphere: Gd<Mesh> = vis.sphere.clone().upcast();
+        // Cylinders are along Y; this turns them along -Z/+Z.
+        let along_z = Quaternion::from_axis_angle(Vector3::RIGHT, std::f32::consts::FRAC_PI_2);
+        let along_x = Quaternion::from_axis_angle(Vector3::BACK, std::f32::consts::FRAC_PI_2);
         for b in g.blocks.values() {
-            let mut bn = Node3D::new_alloc();
-            bn.set_position(Vector3::new(b.cell.x as f32, b.cell.y as f32, b.cell.z as f32));
-            bn.set_quaternion(quat(orient::quat(b.rot)));
-            let add = |parent: &mut Gd<Node3D>, mesh: &Gd<Mesh>, mat: &Gd<godot::classes::StandardMaterial3D>, pos: Vector3, scale: Vector3, rot: Option<Quaternion>| {
-                let mut mi = MeshInstance3D::new_alloc();
-                mi.set_mesh(mesh);
-                mi.set_material_override(mat);
-                mi.set_position(pos);
-                mi.set_scale(scale);
-                if let Some(r) = rot {
-                    mi.set_quaternion(r);
-                }
-                parent.add_child(&mi);
-                mi.upcast::<Node3D>()
+            let bpos = Vector3::new(b.cell.x as f32, b.cell.y as f32, b.cell.z as f32);
+            let bq = quat(orient::quat(b.rot));
+            let bt = Transform3D::new(Basis::from_quaternion(bq), bpos);
+            let mut stat = |mesh: &Gd<Mesh>, mat: &Gd<StandardMaterial3D>, pos: Vector3, scale: Vector3, rot: Option<Quaternion>| {
+                let basis = Basis::from_quaternion(rot.unwrap_or(Quaternion::IDENTITY)) * Basis::from_scale(scale);
+                let key = (mesh.instance_id().to_i64(), mat.instance_id().to_i64());
+                batches
+                    .entry(key)
+                    .or_insert_with(|| (mesh.clone(), mat.clone(), Vec::new()))
+                    .2
+                    .push(bt * Transform3D::new(basis, pos));
             };
-            let cube: Gd<Mesh> = vis.cube.clone().upcast();
-            let cyl: Gd<Mesh> = vis.cylinder.clone().upcast();
-            let nozzle: Gd<Mesh> = vis.nozzle.clone().upcast();
             let mat = &vis.block_mats[&b.kind];
-            // Cylinders are along Y; this turns them along -Z/+Z.
-            let along_z = Quaternion::from_axis_angle(Vector3::RIGHT, std::f32::consts::FRAC_PI_2);
-            let along_x = Quaternion::from_axis_angle(Vector3::BACK, std::f32::consts::FRAC_PI_2);
+            // Only blocks with animated parts (or a seat) get their own node.
+            let needs_node = matches!(
+                b.kind,
+                BlockKind::Thruster | BlockKind::Piston | BlockKind::Door | BlockKind::Sensor | BlockKind::Cockpit
+            );
+            let mut bn = Node3D::new_alloc();
+            bn.set_position(bpos);
+            bn.set_quaternion(bq);
             let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None, eye: None };
-            let sphere: Gd<Mesh> = vis.sphere.clone().upcast();
             match b.kind {
                 BlockKind::Thruster => {
-                    add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, -0.15), Vector3::new(1.0, 1.0, 0.7), None);
-                    add(&mut bn, &nozzle, &vis.dark, Vector3::new(0.0, 0.0, 0.3), Vector3::new(1.0, 0.4, 1.0), Some(along_z));
+                    stat(&cube, mat, Vector3::new(0.0, 0.0, -0.15), Vector3::new(1.0, 1.0, 0.7), None);
+                    stat(&nozzle, &vis.dark, Vector3::new(0.0, 0.0, 0.3), Vector3::new(1.0, 0.4, 1.0), Some(along_z));
                     let f = add(&mut bn, &nozzle, &vis.flame, Vector3::new(0.0, 0.0, 0.8), Vector3::splat(0.3), Some(along_z));
                     node.flame = Some(f);
                 }
                 BlockKind::Piston => {
-                    add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, 0.1), Vector3::new(1.0, 1.0, 0.8), None);
+                    stat(&cube, mat, Vector3::new(0.0, 0.0, 0.1), Vector3::new(1.0, 1.0, 0.8), None);
                     let s = add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.5), Vector3::new(0.3, 1.0, 0.3), Some(along_z));
                     node.shaft = Some(s);
                 }
                 BlockKind::PistonTop | BlockKind::HingeTop | BlockKind::RotorTop => {
-                    add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, -0.3), Vector3::new(1.0, 1.0, 0.4), None);
+                    stat(&cube, mat, Vector3::new(0.0, 0.0, -0.3), Vector3::new(1.0, 1.0, 0.4), None);
                 }
                 BlockKind::Hinge => {
-                    add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, 0.15), Vector3::new(1.0, 1.0, 0.7), None);
-                    add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.4), Vector3::new(0.5, 1.0, 0.5), Some(along_x));
+                    stat(&cube, mat, Vector3::new(0.0, 0.0, 0.15), Vector3::new(1.0, 1.0, 0.7), None);
+                    stat(&cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.4), Vector3::new(0.5, 1.0, 0.5), Some(along_x));
                 }
                 BlockKind::Rotor => {
                     // Base plus a turntable disc on the forward (-Z) face.
-                    add(&mut bn, &cube, mat, Vector3::new(0.0, 0.0, 0.1), Vector3::new(1.0, 1.0, 0.8), None);
-                    add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.4), Vector3::new(0.85, 0.2, 0.85), Some(along_z));
+                    stat(&cube, mat, Vector3::new(0.0, 0.0, 0.1), Vector3::new(1.0, 1.0, 0.8), None);
+                    stat(&cyl, &vis.dark, Vector3::new(0.0, 0.0, -0.4), Vector3::new(0.85, 0.2, 0.85), Some(along_z));
                 }
                 BlockKind::Programmable => {
-                    add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::ONE, None);
-                    add(&mut bn, &cube, &vis.screen, Vector3::new(0.0, 0.1, -0.47), Vector3::new(0.7, 0.5, 0.06), None);
+                    stat(&cube, mat, Vector3::ZERO, Vector3::ONE, None);
+                    stat(&cube, &vis.screen, Vector3::new(0.0, 0.1, -0.47), Vector3::new(0.7, 0.5, 0.06), None);
                 }
                 BlockKind::Cockpit => {
                     add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::ONE, None);
                     add(&mut bn, &cube, &vis.window, Vector3::new(0.0, 0.2, -0.47), Vector3::new(0.8, 0.45, 0.08), None);
                 }
                 BlockKind::Armor => {
-                    add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::ONE, None);
+                    stat(&cube, mat, Vector3::ZERO, Vector3::ONE, None);
                 }
                 BlockKind::Gyro => {
-                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.0, -0.4, 0.0), Vector3::new(1.0, 0.2, 1.0), None);
-                    add(&mut bn, &sphere, mat, Vector3::new(0.0, 0.05, 0.0), Vector3::splat(0.36), None);
-                    add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.05, 0.0), Vector3::new(0.9, 0.06, 0.9), None);
+                    stat(&cube, &vis.dark, Vector3::new(0.0, -0.4, 0.0), Vector3::new(1.0, 0.2, 1.0), None);
+                    stat(&sphere, mat, Vector3::new(0.0, 0.05, 0.0), Vector3::splat(0.36), None);
+                    stat(&cyl, &vis.dark, Vector3::new(0.0, 0.05, 0.0), Vector3::new(0.9, 0.06, 0.9), None);
                 }
                 BlockKind::Door => {
                     // Frame around the opening plus a panel that slides up when open.
-                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.0, 0.45, 0.0), Vector3::new(1.0, 0.1, 1.0), None);
-                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.0, -0.45, 0.0), Vector3::new(1.0, 0.1, 1.0), None);
-                    add(&mut bn, &cube, &vis.dark, Vector3::new(0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
-                    add(&mut bn, &cube, &vis.dark, Vector3::new(-0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
+                    stat(&cube, &vis.dark, Vector3::new(0.0, 0.45, 0.0), Vector3::new(1.0, 0.1, 1.0), None);
+                    stat(&cube, &vis.dark, Vector3::new(0.0, -0.45, 0.0), Vector3::new(1.0, 0.1, 1.0), None);
+                    stat(&cube, &vis.dark, Vector3::new(0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
+                    stat(&cube, &vis.dark, Vector3::new(-0.45, 0.0, 0.0), Vector3::new(0.1, 1.0, 1.0), None);
                     let panel = add(&mut bn, &cube, mat, Vector3::ZERO, Vector3::new(0.82, 0.82, 0.2), None);
                     node.door = Some(panel);
                 }
                 BlockKind::Sensor => {
                     // Base, mast and a dome with an eye on the front (-Z) face.
-                    add(&mut bn, &cube, mat, Vector3::new(0.0, -0.3, 0.0), Vector3::new(0.9, 0.35, 0.9), None);
-                    add(&mut bn, &cyl, &vis.dark, Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.18, 0.4, 0.18), None);
-                    add(&mut bn, &sphere, mat, Vector3::new(0.0, 0.22, 0.0), Vector3::splat(0.26), None);
-                    add(&mut bn, &sphere, &vis.dark, Vector3::new(0.0, 0.22, -0.2), Vector3::splat(0.09), None);
+                    stat(&cube, mat, Vector3::new(0.0, -0.3, 0.0), Vector3::new(0.9, 0.35, 0.9), None);
+                    stat(&cyl, &vis.dark, Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.18, 0.4, 0.18), None);
+                    stat(&sphere, mat, Vector3::new(0.0, 0.22, 0.0), Vector3::splat(0.26), None);
+                    stat(&sphere, &vis.dark, Vector3::new(0.0, 0.22, -0.2), Vector3::splat(0.09), None);
                     let eye = add(&mut bn, &sphere, &vis.sensor_on, Vector3::new(0.0, 0.22, -0.21), Vector3::splat(0.1), None);
                     node.eye = Some(eye);
                 }
             }
-            root.add_child(&bn);
-            blocks.insert(b.id, node);
+            if needs_node {
+                root.add_child(&bn);
+                blocks.insert(b.id, node);
+            } else {
+                bn.free();
+            }
+        }
+        for (_, (mesh, mat, xforms)) in batches {
+            let mut mm = MultiMesh::new_gd();
+            mm.set_transform_format(TransformFormat::TRANSFORM_3D);
+            mm.set_mesh(&mesh);
+            mm.set_instance_count(xforms.len() as i32);
+            for (i, t) in xforms.iter().enumerate() {
+                mm.set_instance_transform(i as i32, *t);
+            }
+            let mut mmi = MultiMeshInstance3D::new_alloc();
+            mmi.set_multimesh(&mm);
+            mmi.set_material_override(&mat);
+            root.add_child(&mmi);
         }
         self.grid_nodes.insert(id, GridNode { root, blocks });
     }

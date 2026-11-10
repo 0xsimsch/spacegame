@@ -203,6 +203,78 @@ function on_message(arg)
 end
 "#;
 
+/// The frigate's computer: sensor-guided turrets and door control.
+pub const FRIGATE: &str = r#"-- Frigate computer. The two roof turrets track the nearest player
+-- outside the hull that the sensor sees (300 m). "Run" with:
+--   track | park        turrets follow targets / stand upright
+--   airlocks | cargo    open or close the side airlocks / the rear cargo door
+local sensor = grid:block("Frigate Sensor")
+assert(sensor, "needs a sensor named 'Frigate Sensor'")
+sensor:set_range(300)
+local turrets = {}
+for i = 1, 2 do
+  local r, h = grid:block("Turret " .. i .. " Rotor"), grid:block("Turret " .. i .. " Hinge")
+  assert(r and h, "needs 'Turret N Rotor' and 'Turret N Hinge'")
+  turrets[i] = { rotor = r, hinge = h }
+end
+local airlocks, cargo = {}, {}
+for _, d in grid:blocks("door") do
+  table.insert(if string.find(d.name, "Cargo") then cargo else airlocks, d)
+end
+local tracking = true
+local current = nil
+
+-- The hull spans x -8..8, y 0..8, z -30..30 (plus thrusters around it).
+local function in_hull(p)
+  return math.abs(p.x) < 10 and p.y > -2 and p.y < 10 and math.abs(p.z) < 32
+end
+
+local function pick()
+  for _, p in sensor.players do
+    if not in_hull(p.position) then return p end
+  end
+  return nil
+end
+
+local function toggle(list, what)
+  local open = not list[1].is_open
+  for _, d in list do d:set_open(open) end
+  print(what, if open then "open" else "closed")
+end
+
+function on_message(arg)
+  if arg == "track" or arg == "park" then
+    tracking = arg == "track"
+    print("turrets:", arg)
+  elseif arg == "airlocks" then
+    toggle(airlocks, "airlocks")
+  elseif arg == "cargo" then
+    toggle(cargo, "cargo door")
+  else
+    print("unknown command", arg)
+  end
+end
+
+function tick(dt)
+  local p = if tracking then pick() else nil
+  if (p and p.name) ~= current then
+    current = p and p.name
+    print(if current then "tracking " .. current else "no target")
+  end
+  for _, t in turrets do
+    if p then
+      -- Rotor: right-handed around +Y; hinge 0 = barrel up, +90 = level toward +Z.
+      local d = p.position - (t.hinge.position + vector.create(0, 0.5, 0))
+      local flat = math.sqrt(d.x * d.x + d.z * d.z)
+      t.rotor:set_target_angle(math.deg(math.atan2(d.x, d.z)))
+      t.hinge:set_target_angle(math.clamp(math.deg(math.atan2(flat, d.y)), 0, 90))
+    else
+      t.hinge:set_target_angle(0)
+    end
+  end
+end
+"#;
+
 /// Shared thruster-allocation helper used by the flight scripts.
 const THRUST_HELPER: &str = r#"
 -- Fire thrusters so the grid accelerates by `accel` (grid frame, m/s^2).
@@ -528,6 +600,7 @@ pub fn all() -> Vec<(&'static str, String)> {
         ("Carousel", CAROUSEL.to_string()),
         ("Shuttle autopilot", shuttle_autopilot()),
         ("Follow drone", drone_follow()),
+        ("Frigate computer", FRIGATE.to_string()),
         ("Velocity hold", velocity_hold()),
         ("Hover", hover()),
     ]

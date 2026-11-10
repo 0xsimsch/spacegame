@@ -152,6 +152,25 @@ func _run() -> void:
 	await _shot("04b_drone_third")
 	game.debug_key("V")
 
+	# The big frigate: spawn one and check it arrives with all its parts.
+	game.send_chat("/spawn frigate")
+	await _wait(3.0)
+	var frigate_parts := 0
+	for gid in game.debug_grid_ids():
+		var blks: Array = game.grid_blocks(gid)
+		for blk in blks:
+			if blk["name"] == "Frigate Bridge":
+				frigate_parts = blks.size()
+	_check(frigate_parts >= 3000, "frigate replicated with %d parts" % frigate_parts)
+	game.debug_key("V")
+	game.debug_zoom(20)
+	game.debug_set_look(0.0, -12.0)
+	await _wait(1.0)
+	await _shot("04c_frigate")
+	print("  fps with frigate: ", Engine.get_frames_per_second())
+	game.debug_zoom(-20)
+	game.debug_key("V")
+
 	# Script editor round trip on the spawned ship's flight computer.
 	var pb := -1
 	for gid in game.debug_grid_ids():

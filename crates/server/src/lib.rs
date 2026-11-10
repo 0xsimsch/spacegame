@@ -50,6 +50,9 @@ struct Client {
     /// Outgoing messages held back to simulate latency.
     delayed: VecDeque<(Instant, u8, Vec<u8>)>,
     last_ack: u32,
+    /// Block values last sent to this client; only changes go out (plus a
+    /// periodic full refresh, since snapshots are unreliable).
+    sent_values: HashMap<BlockId, f32>,
 }
 
 pub struct GameServer {
@@ -191,6 +194,7 @@ impl GameServer {
                             known_players: HashSet::new(),
                             delayed: VecDeque::new(),
                             last_ack: 0,
+                            sent_values: HashMap::new(),
                         },
                     );
                 }
@@ -412,7 +416,13 @@ impl GameServer {
                 )
             })
             .collect();
+        // Every 60 snapshots (2 s) each client gets all values again.
+        let full_refresh = (self.world.tick / 2) % 60 == 0;
         for id in self.joined() {
+            let c = self.clients.get_mut(&id).unwrap();
+            if full_refresh {
+                c.sent_values.clear();
+            }
             let c = &self.clients[&id];
             let pid = c.player.unwrap();
             let Some(pp) = self.world.player_pos(pid) else { continue };
@@ -441,8 +451,15 @@ impl GameServer {
                         BlockState::Sensor { detected, .. } => *detected as f64,
                         _ => continue,
                     };
-                    snap.values.push(BlockValue { id: blk.id, value: v as f32 });
+                    let v = v as f32;
+                    if c.sent_values.get(&blk.id).is_none_or(|old| (old - v).abs() > 0.004) {
+                        snap.values.push(BlockValue { id: blk.id, value: v });
+                    }
                 }
+            }
+            let c = self.clients.get_mut(&id).unwrap();
+            for v in &snap.values {
+                c.sent_values.insert(v.id, v.value);
             }
             let new_players: Vec<PlayerId> =
                 snap.players.iter().map(|p| p.id).filter(|p| !self.clients[&id].known_players.contains(p)).collect();
@@ -543,7 +560,7 @@ impl GameServer {
                     client,
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
-                     /spawn <ship|shuttle|drone|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
+                     /spawn <ship|shuttle|frigate|drone|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
                      /sit [cockpit name] - sit in the nearest free cockpit (60 m)\n/save - save the world\n/where - show your position",
                 );
                 Ok(())
@@ -581,6 +598,7 @@ impl GameServer {
                 let dist = match what {
                     "ship" | "pad" | "arm" | "drone" => 8.0,
                     "shuttle" => 12.0,
+                    "frigate" => 45.0,
                     _ => 15.0,
                 };
                 let at = pos + fwd * dist;
@@ -591,7 +609,7 @@ impl GameServer {
                     let body = &shared::solar::BODIES[b];
                     let up = (at - body.position).normalize();
                     let ground = body.position + up * (body.radius + match what {
-                        "ship" | "drone" => 1.6,
+                        "ship" | "drone" | "frigate" => 1.6,
                         "shuttle" => 4.0,
                         _ => 0.6,
                     });
@@ -642,6 +660,7 @@ fn seed_world(world: &mut World) {
     // The shuttle's origin is its floor; its legs reach 3.5 m below.
     world.spawn_prefab("shuttle", spawn + rot * DVec3::new(-28.0, 4.0, 2.0), rot, None);
     world.spawn_prefab("drone", spawn + rot * DVec3::new(6.0, 1.6, -4.0), rot, None);
+    world.spawn_prefab("frigate", spawn + rot * DVec3::new(62.0, 1.6, -20.0), rot, None);
 }
 
 /// 20 hovering ships + 30 sweeping arms = 50 scripts, all near the Earth spawn.

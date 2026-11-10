@@ -589,3 +589,85 @@ fn drone_follows_player() {
     assert!(fwd.dot(to_h) > 0.9, "faces the player: {:.2}", fwd.dot(to_h));
     assert_eq!(w.script_info(pb).unwrap().error, None);
 }
+
+#[test]
+fn frigate_big_ship() {
+    let mut w = World::new();
+    let ground = above("Earth", 0.0);
+    let rot = prefabs::surface_orientation(ground);
+    let up = rot * DVec3::Y;
+    let t0 = std::time::Instant::now();
+    let g = w.spawn_prefab("frigate", ground + up * 1.6, rot, None).unwrap();
+    let spawn_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let group = w.mech_group(g);
+    let parts: usize = group.iter().map(|id| w.grids[id].blocks.len()).sum();
+    let mass: f64 = group.iter().map(|id| w.phys.bodies[w.grids[id].body].mass()).sum();
+    let count = |k: BlockKind| w.grids[&g].blocks.values().filter(|b| b.kind == k).count();
+    let lift = w.grids[&g].blocks.values().filter(|b| b.kind == BlockKind::Thruster && orient::forward(b.rot) == IVec3::Y).count();
+    let twr = lift as f64 * shared::blocks::THRUSTER_MAX_FORCE / (mass * 9.81);
+    eprintln!(
+        "frigate: {parts} parts ({} armor, {} thrusters, {lift} lift, {} doors), {:.0} t, lift T/W {twr:.2}, spawned in {spawn_ms:.0} ms",
+        count(BlockKind::Armor),
+        count(BlockKind::Thruster),
+        count(BlockKind::Door),
+        mass / 1000.0
+    );
+    assert!(parts >= 3000, "at least 3000 parts: {parts}");
+    assert!(twr > 1.3, "can lift off Earth: T/W {twr:.2}");
+    let pb = w.grids[&g].blocks.values().find(|b| b.name == "Frigate Computer").unwrap().id;
+    assert_eq!(w.script_info(pb).unwrap().error, None);
+    let t = std::time::Instant::now();
+    let bytes = w.save_bytes();
+    let w2 = World::load_bytes(&bytes).unwrap();
+    eprintln!("save {} KB, save+load {:.0} ms", bytes.len() / 1024, t.elapsed().as_secs_f64() * 1000.0);
+    assert_eq!(w2.total_blocks(), w.total_blocks());
+
+    // Settles on the ground.
+    run(&mut w, 2.0);
+    let t = std::time::Instant::now();
+    run(&mut w, 2.0);
+    let tick_ms = t.elapsed().as_secs_f64() * 1000.0 / 120.0;
+    let alt0 = gravity_at(w.grid_pose(g).unwrap().translation).altitude;
+    eprintln!("resting altitude {alt0:.2}, tilt {:.1}, {tick_ms:.2} ms per tick", tilt_deg(&w, g));
+    assert!(tilt_deg(&w, g) < 3.0);
+
+    // A player outside, 40 m to starboard and 10 m up: both turrets aim at them.
+    w.add_player(1, "target");
+    let target = w.grid_pose(g).unwrap().transform_point(DVec3::new(40.0, 12.0, 0.0));
+    w.teleport_player(1, target);
+    let mut aim_errors = Vec::new();
+    for _ in 0..(4 * 60) {
+        w.teleport_player(1, target); // hold still against gravity
+        w.step();
+    }
+    for i in 1..=2 {
+        let hinge = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == format!("Turret {i} Hinge")).unwrap().id;
+        let barrel = match &w.block(hinge).unwrap().1.state {
+            BlockState::Mech(m) => m.top.unwrap(),
+            _ => unreachable!(),
+        };
+        let pose = w.grid_pose(barrel).unwrap();
+        let dir = pose.rotation * DVec3::Y;
+        let want = (target - pose.translation).normalize();
+        aim_errors.push(dir.angle_between(want).to_degrees());
+    }
+    eprintln!("turret aim errors {aim_errors:.1?}");
+    assert!(aim_errors.iter().all(|e| *e < 4.0), "turrets aim at the player: {aim_errors:?}");
+
+    // Fly it from the bridge: climb for 5 s, then let the dampeners hold it.
+    let bridge = w.grids[&g].blocks.values().find(|b| b.name == "Frigate Bridge").unwrap().id;
+    w.enter_seat_unchecked(1, bridge).unwrap();
+    let mut input = PlayerInput { movement: glam::Vec3::Y, dampeners: true, look: DQuat::IDENTITY, ..Default::default() };
+    w.set_input(1, input.clone());
+    run(&mut w, 5.0);
+    input.movement = glam::Vec3::ZERO;
+    w.set_input(1, input);
+    run(&mut w, 8.0);
+    let pose = w.grid_pose(g).unwrap();
+    let alt = gravity_at(pose.translation).altitude;
+    let v = w.phys.bodies[w.grids[&g].body].linvel().length();
+    eprintln!("after climb: altitude {alt:.1}, speed {v:.2}, tilt {:.1}", tilt_deg(&w, g));
+    assert!(alt > alt0 + 15.0, "climbed: {alt:.1}");
+    assert!(v < 1.0, "dampeners hold it: {v:.2}");
+    assert!(tilt_deg(&w, g) < 5.0);
+}

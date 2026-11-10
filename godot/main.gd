@@ -11,7 +11,7 @@ G build mode: 1-9, 0 or mouse wheel pick block (5 rotor, 8 gyroscope, 9 door, 0 
 V first/third person (third person: mouse wheel zooms, up to 300 m when seated)
 F use: sit in cockpit / open-close door / edit programmable block / control a block
 K control panel of the grid you look at (or are seated in)
-Enter chat & commands (/help, /tp moon, /spawn ship hover, /spawn drone, /save)
+Enter chat & commands (/help, /tp moon, /spawn ship hover, /spawn drone, /spawn frigate, /save)
 F3 stats overlay, Esc menu
 
 [b]Scripting[/b] (Luau) - see the examples in the script editor:
