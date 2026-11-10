@@ -167,7 +167,10 @@ fn player_table(lua: &Lua, p: &SensedPlayer) -> mlua::Result<mlua::Table> {
 impl UserData for BlockRef {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
         m.add_method("set_override", |lua, this, v: Value| {
-            match (with_block(lua, this.0, |b| b.kind)?, v) {
+            let kind = with_block(lua, this.0, |b| b.kind)?;
+            // Both thruster sizes behave the same for scripts.
+            let kind = if kind.is_thruster() { BlockKind::Thruster } else { kind };
+            match (kind, v) {
                 (BlockKind::Thruster, Value::Number(n)) => push(lua, Command::ThrusterOverride(this.0, n.clamp(0.0, 1.0))),
                 (BlockKind::Thruster, Value::Integer(n)) => push(lua, Command::ThrusterOverride(this.0, (n as f64).clamp(0.0, 1.0))),
                 (BlockKind::Gyro, Value::Vector(w)) => {

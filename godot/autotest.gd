@@ -152,24 +152,40 @@ func _run() -> void:
 	await _shot("04b_drone_third")
 	game.debug_key("V")
 
-	# The big frigate: spawn one and check it arrives with all its parts.
-	game.send_chat("/spawn frigate")
+	# The big cruiser: spawn one and check it arrives with all its parts.
+	game.send_chat("/spawn cruiser")
 	await _wait(3.0)
 	var frigate_parts := 0
 	for gid in game.debug_grid_ids():
 		var blks: Array = game.grid_blocks(gid)
 		for blk in blks:
-			if blk["name"] == "Frigate Bridge":
+			if blk["name"] == "Cruiser Bridge":
 				frigate_parts = blks.size()
-	_check(frigate_parts >= 3000, "frigate replicated with %d parts" % frigate_parts)
+	_check(frigate_parts >= 3000, "cruiser replicated with %d parts" % frigate_parts)
 	game.debug_key("V")
 	game.debug_zoom(20)
-	game.debug_set_look(0.0, -12.0)
+	game.debug_look_at_block("Cruiser Computer", 0.0)
 	await _wait(1.0)
-	await _shot("04c_frigate")
-	print("  fps with frigate: ", Engine.get_frames_per_second())
+	await _shot("04c_cruiser")
+	game.debug_look_at_block("Main Engine 15", 0.0)
+	await _wait(0.5)
+	await _shot("04d_cruiser_engines")
+	print("  fps with cruiser: ", Engine.get_frames_per_second())
 	game.debug_zoom(-20)
 	game.debug_key("V")
+	# Chase camera from the bridge: zoomed out behind and above the ship.
+	game.send_chat("/sit Cruiser Bridge")
+	await _wait(1.0)
+	game.debug_key("V")
+	game.debug_zoom(12)
+	await _wait(0.8)
+	await _shot("04e_cruiser_chase")
+	game.debug_zoom(-12)
+	game.debug_key("V")
+	game.debug_key("F")
+	await _wait(0.5)
+	game.send_chat("/tp earth")
+	await _wait(1.5)
 
 	# Script editor round trip on the spawned ship's flight computer.
 	var pb := -1

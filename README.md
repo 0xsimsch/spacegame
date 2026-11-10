@@ -21,7 +21,7 @@ cargo run --release -p server --bin bot -- --addr 127.0.0.1:47800 --count 4 --se
 Client command-line options (after `--`): `--host`, `--join HOST:PORT`, `--name N`,
 `--port P`, `--autotest [--shots DIR] [--expect-players N]`.
 
-Tests: `cargo test --workspace` (32 tests, including the three acceptance scripts) and
+Tests: `cargo test --workspace` (34 tests, including the three acceptance scripts) and
 `godot --headless --path godot -- --autotest --host --port 47891` (end-to-end client smoke test).
 
 ## Controls
@@ -30,10 +30,10 @@ Tests: `cargo test --workspace` (32 tests, including the three acceptance script
 |---|---|
 | WASD / Space / C | move (jetpack), Q/E roll in zero-g |
 | J / Z / X | jetpack, inertial dampeners, cruise (speed cap 150 → 5000 m/s) |
-| G | build mode: 1-9, 0 / wheel pick block (5 rotor, 8 gyroscope, 9 door, 0 sensor), R/T rotate, B ship/station, LMB place, RMB remove |
+| G | build mode: 1-9, 0, - / wheel pick block (5 rotor, 8 gyroscope, 9 door, 0 sensor, - large 2×2×2 thruster), R/T rotate, B ship/station, LMB place, RMB remove |
 | F | sit in cockpit / open or close a door / edit programmable block / control panel of a block; F again to stand up |
 | K | control panel of the grid you look at or sit in |
-| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <shuttle\|frigate\|drone\|arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
+| Enter | chat and commands: `/help`, `/tp moon`, `/tpship mars`, `/spawn ship hover`, `/spawn <shuttle\|cruiser\|drone\|arm\|elevator\|crane\|robot\|bridge\|carousel>`, `/save`, `/where` |
 | V | first / third person; in third person the mouse wheel zooms (seated: chase camera fixed to the seat, 3-300 m) |
 | F1 / F3 / Esc | help, stats overlay, menu |
 
@@ -51,7 +51,7 @@ driven by its own programmable block; open it with F to read or change the scrip
 | Carousel | rotor → hub with 4 arms → swing hinges → gondolas with seats | spins up, slows, reverses; the swing hinges are free, so the gondolas swing out from real centrifugal force. Run `motor` to drive them to atan(ω²r/g) instead. Sit in one with F |
 | Shuttle | 5×4×7 walk-in hull: cockpit, side door, rear ramp on a hinge, 4 piston landing legs, 18 thrusters on all six sides, gyroscope | the "Shuttle Computer" autopilot. Run with `takeoff`, `hover 60`, `land` (lands and opens the ramp), `level`, `off` (manual), `ramp`, `door`. It keeps itself level with the gyroscope |
 | Drawbridge | wall → hinge → 3×6 deck | opens/closes every 8 s. Run with `open`, `close` or `auto` |
-| Frigate | 4,242 parts: 17×9×61 m hollow hull with a tapered nose, two decks joined by a hatch, bulkheads, bridge cockpit in the nose, 4 airlocks, a 5×3 rear cargo door, 543 thrusters (253 lift, T/W 1.7 on Earth), 4 gyroscopes, a sensor and two rotor+hinge turrets on the roof | the "Frigate Computer" points both turrets at the nearest player outside the hull (300 m sensor). Run with `track`, `park`, `airlocks`, `cargo`. Fly it from the "Frigate Bridge" cockpit. `/spawn frigate` puts one 45 m in front of you |
+| Cruiser | 6,772 parts, 80 m long: forked prow with a hangar bay (5×3 door) between the prongs, two-deck main hull, side wings, raised command tower with the "Cruiser Bridge" cockpit, oversized engine block with a wall of 40 large (2×2×2) main engines, 906 thrusters in total (thrust-to-weight 1.65 on Earth), 4 gyroscopes, a sensor and four rotor+hinge turrets | the "Cruiser Computer" points all turrets at the nearest player outside the hull (300 m sensor). Run with `track`, `park`, `airlocks`, `hangar`. `/spawn cruiser` puts one 60 m in front of you |
 | Drone | quad layout: 4 corner lift thrusters, one thruster per other direction, gyroscope, sensor on top | the "Drone Computer" follows the nearest player its sensor sees (150 m), 5 m away and 3 m up, facing them. Run with `follow`, `follow <name>`, `stay`, `off`, `distance 8`, `height 5`. `/spawn drone` makes another |
 
 Mechanical joints are Rapier multibody (reduced-coordinate) joints, so long chains stay stiff.
@@ -70,7 +70,8 @@ end
 function on_message(arg) end               -- "Run" button / argument
 ```
 
-Blocks: `thruster:set_override(0..1)`, `.max_thrust`, `.current_thrust`, `.forward`;
+Blocks: `thruster:set_override(0..1)`, `.max_thrust` (30 kN, or 200 kN for the large 2×2×2 thruster, which
+scripts also see as type `thruster`), `.current_thrust`, `.forward`;
 `piston:set_velocity`, `.extension`, `.min`, `.max`; `hinge:set_velocity`,
 `hinge:set_target_angle(deg|nil)`, `.angle`; `rotor`: same as a hinge, but it spins without
 limits around its forward axis, `.angle` wraps at ±180 and targets take the shortest way round.

@@ -560,8 +560,8 @@ impl GameServer {
                     client,
                     "/tp <body> - teleport (bodies: Sun Mercury Venus Earth Moon Mars Jupiter Saturn Uranus Neptune)\n\
                      /tpship <body> - teleport the ship you are seated in\n\
-                     /spawn <ship|shuttle|frigate|drone|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
-                     /sit [cockpit name] - sit in the nearest free cockpit (60 m)\n/save - save the world\n/where - show your position",
+                     /spawn <ship|shuttle|cruiser|drone|arm|pad|elevator|crane|robot|bridge|carousel> [hover|velocity] - spawn a prefab in front of you\n\
+                     /sit [cockpit name] - sit in the nearest free cockpit (150 m)\n/save - save the world\n/where - show your position",
                 );
                 Ok(())
             }
@@ -598,7 +598,7 @@ impl GameServer {
                 let dist = match what {
                     "ship" | "pad" | "arm" | "drone" => 8.0,
                     "shuttle" => 12.0,
-                    "frigate" => 45.0,
+                    "cruiser" | "frigate" => 60.0,
                     _ => 15.0,
                 };
                 let at = pos + fwd * dist;
@@ -609,7 +609,7 @@ impl GameServer {
                     let body = &shared::solar::BODIES[b];
                     let up = (at - body.position).normalize();
                     let ground = body.position + up * (body.radius + match what {
-                        "ship" | "drone" | "frigate" => 1.6,
+                        "ship" | "drone" | "cruiser" | "frigate" => 1.6,
                         "shuttle" => 4.0,
                         _ => 0.6,
                     });
@@ -623,7 +623,7 @@ impl GameServer {
             }
             "sit" => {
                 let name = (!args.is_empty()).then(|| args.join(" "));
-                let seat = self.world.nearest_free_seat(pid, 60.0, name.as_deref()).ok_or("no free cockpit within 60 m")?;
+                let seat = self.world.nearest_free_seat(pid, 150.0, name.as_deref()).ok_or("no free cockpit within 150 m")?;
                 self.world.enter_seat_unchecked(pid, seat)
             }
             "save" => {
@@ -660,7 +660,7 @@ fn seed_world(world: &mut World) {
     // The shuttle's origin is its floor; its legs reach 3.5 m below.
     world.spawn_prefab("shuttle", spawn + rot * DVec3::new(-28.0, 4.0, 2.0), rot, None);
     world.spawn_prefab("drone", spawn + rot * DVec3::new(6.0, 1.6, -4.0), rot, None);
-    world.spawn_prefab("frigate", spawn + rot * DVec3::new(62.0, 1.6, -20.0), rot, None);
+    world.spawn_prefab("cruiser", spawn + rot * DVec3::new(62.0, 1.6, -20.0), rot, None);
 }
 
 /// 20 hovering ships + 30 sweeping arms = 50 scripts, all near the Earth spawn.

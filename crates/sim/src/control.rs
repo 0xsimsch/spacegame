@@ -112,8 +112,8 @@ impl World {
             // Capacity per thrust direction.
             let mut cap: HashMap<IVec3, f64> = HashMap::new();
             for b in g.blocks.values() {
-                if b.kind == BlockKind::Thruster {
-                    *cap.entry(orient::forward(b.rot)).or_default() += THRUSTER_MAX_FORCE;
+                if b.kind.is_thruster() {
+                    *cap.entry(orient::forward(b.rot)).or_default() += b.kind.thrust();
                 }
             }
             let g = self.grids.get_mut(&gid).unwrap();
@@ -181,7 +181,8 @@ impl World {
                     t.output = out;
                     if out > 0.0 {
                         let dir = gp.rotation * orient::forward(b.rot).as_dvec3();
-                        forces.push((dir * out * THRUSTER_MAX_FORCE, gp.transform_point(b.cell.as_dvec3())));
+                        let at = b.cell.as_dvec3() + b.kind.center_offset(b.rot);
+                        forces.push((dir * out * b.kind.thrust(), gp.transform_point(at)));
                         awake = true;
                     }
                 }

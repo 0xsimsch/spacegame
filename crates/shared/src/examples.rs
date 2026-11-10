@@ -203,30 +203,33 @@ function on_message(arg)
 end
 "#;
 
-/// The frigate's computer: sensor-guided turrets and door control.
-pub const FRIGATE: &str = r#"-- Frigate computer. The two roof turrets track the nearest player
--- outside the hull that the sensor sees (300 m). "Run" with:
+/// The cruiser's computer: sensor-guided turrets and door control.
+pub const CRUISER: &str = r#"-- Cruiser computer. The turrets track the nearest player outside the
+-- hull that the sensor sees (300 m). "Run" with:
 --   track | park        turrets follow targets / stand upright
---   airlocks | cargo    open or close the side airlocks / the rear cargo door
-local sensor = grid:block("Frigate Sensor")
-assert(sensor, "needs a sensor named 'Frigate Sensor'")
+--   airlocks | hangar   open or close the side airlocks / the hangar door in the prow
+local sensor = grid:block("Cruiser Sensor")
+assert(sensor, "needs a sensor named 'Cruiser Sensor'")
 sensor:set_range(300)
+-- Every "Turret N Rotor" / "Turret N Hinge" pair is a turret.
 local turrets = {}
-for i = 1, 2 do
+while true do
+  local i = #turrets + 1
   local r, h = grid:block("Turret " .. i .. " Rotor"), grid:block("Turret " .. i .. " Hinge")
-  assert(r and h, "needs 'Turret N Rotor' and 'Turret N Hinge'")
+  if not (r and h) then break end
   turrets[i] = { rotor = r, hinge = h }
 end
-local airlocks, cargo = {}, {}
+print(#turrets, "turrets online")
+local airlocks, hangar = {}, {}
 for _, d in grid:blocks("door") do
-  table.insert(if string.find(d.name, "Cargo") then cargo else airlocks, d)
+  table.insert(if string.find(d.name, "Hangar") then hangar else airlocks, d)
 end
 local tracking = true
 local current = nil
 
--- The hull spans x -8..8, y 0..8, z -30..30 (plus thrusters around it).
+-- Bounding box of the hull and its thrusters.
 local function in_hull(p)
-  return math.abs(p.x) < 10 and p.y > -2 and p.y < 10 and math.abs(p.z) < 32
+  return math.abs(p.x) < 16 and p.y > -2 and p.y < 19 and p.z > -44 and p.z < 39
 end
 
 local function pick()
@@ -237,6 +240,7 @@ local function pick()
 end
 
 local function toggle(list, what)
+  if #list == 0 then print("no", what) return end
   local open = not list[1].is_open
   for _, d in list do d:set_open(open) end
   print(what, if open then "open" else "closed")
@@ -248,8 +252,8 @@ function on_message(arg)
     print("turrets:", arg)
   elseif arg == "airlocks" then
     toggle(airlocks, "airlocks")
-  elseif arg == "cargo" then
-    toggle(cargo, "cargo door")
+  elseif arg == "hangar" or arg == "cargo" then
+    toggle(hangar, "hangar door")
   else
     print("unknown command", arg)
   end
@@ -600,7 +604,7 @@ pub fn all() -> Vec<(&'static str, String)> {
         ("Carousel", CAROUSEL.to_string()),
         ("Shuttle autopilot", shuttle_autopilot()),
         ("Follow drone", drone_follow()),
-        ("Frigate computer", FRIGATE.to_string()),
+        ("Cruiser computer", CRUISER.to_string()),
         ("Velocity hold", velocity_hold()),
         ("Hover", hover()),
     ]

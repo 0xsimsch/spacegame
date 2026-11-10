@@ -45,9 +45,26 @@ pub struct ClientGrid {
     pub is_static: bool,
     pub blocks: HashMap<IVec3, BlockData>,
     pub by_id: HashMap<BlockId, IVec3>,
+    /// Extra cells covered by multi-cell blocks, mapped to their anchor cell.
+    pub occupied: HashMap<IVec3, IVec3>,
     states: VecDeque<(f64, GridState)>,
     /// Block list changed since the renderer last rebuilt this grid.
     pub dirty: bool,
+}
+
+impl ClientGrid {
+    fn add_block(&mut self, b: BlockData) {
+        for c in b.kind.footprint(b.cell, b.rot).into_iter().skip(1) {
+            self.occupied.insert(c, b.cell);
+        }
+        self.by_id.insert(b.id, b.cell);
+        self.blocks.insert(b.cell, b);
+    }
+
+    /// Anchor cell of the block covering `cell`, if any.
+    pub fn anchor_at(&self, cell: IVec3) -> Option<IVec3> {
+        if self.blocks.contains_key(&cell) { Some(cell) } else { self.occupied.get(&cell).copied() }
+    }
 }
 
 pub struct ClientPlayer {
@@ -110,12 +127,12 @@ impl ClientState {
                     is_static: g.is_static,
                     blocks: HashMap::new(),
                     by_id: HashMap::new(),
+                    occupied: HashMap::new(),
                     states: VecDeque::new(),
                     dirty: true,
                 };
                 for b in g.blocks {
-                    cg.by_id.insert(b.id, b.cell);
-                    cg.blocks.insert(b.cell, b);
+                    cg.add_block(b);
                 }
                 let st = GridState { id: g.id, pos: g.pos, rot: g.rot, linvel: Default::default(), angvel: Default::default() };
                 cg.states.push_back((self.latest_tick as f64, st));
@@ -129,8 +146,7 @@ impl ClientState {
             }
             ServerMsg::BlockAdded { grid, block } => {
                 if let Some(g) = self.grids.get_mut(&grid) {
-                    g.by_id.insert(block.id, block.cell);
-                    g.blocks.insert(block.cell, block);
+                    g.add_block(block);
                     g.dirty = true;
                     self.ui_events.push(UiEvent::GridChanged(grid));
                 }
@@ -138,7 +154,11 @@ impl ClientState {
             ServerMsg::BlockRemoved { grid, block } => {
                 if let Some(g) = self.grids.get_mut(&grid) {
                     if let Some(cell) = g.by_id.remove(&block) {
-                        g.blocks.remove(&cell);
+                        if let Some(b) = g.blocks.remove(&cell) {
+                            for c in b.kind.footprint(cell, b.rot).into_iter().skip(1) {
+                                g.occupied.remove(&c);
+                            }
+                        }
                         g.dirty = true;
                     }
                     self.ui_events.push(UiEvent::GridChanged(grid));
@@ -334,9 +354,10 @@ impl ClientState {
             let o = pose.inverse_transform(origin);
             let d = pose.rot.inverse() * dir;
             let skip_cell = skip.and_then(|s| g.by_id.get(&s).copied());
-            if let Some((cell, normal, dist)) = grid_dda(&g.blocks, o, d, max, skip_cell) {
+            if let Some((cell, normal, dist)) = grid_dda(g, o, d, max, skip_cell) {
                 if best.as_ref().is_none_or(|b| dist < b.dist) {
-                    best = Some(RayHit { grid: g.id, cell, normal, dist, block: g.blocks[&cell].id, kind: g.blocks[&cell].kind });
+                    let blk = &g.blocks[&g.anchor_at(cell).unwrap()];
+                    best = Some(RayHit { grid: g.id, cell, normal, dist, block: blk.id, kind: blk.kind });
                 }
             }
         }
@@ -425,7 +446,7 @@ use sim as sim_consts;
 
 /// Amanatides–Woo voxel traversal in grid-local space (cells are unit cubes
 /// centred on integer coordinates). Returns (cell, entry normal, distance).
-fn grid_dda(blocks: &HashMap<IVec3, BlockData>, o: DVec3, d: DVec3, max: f64, skip: Option<IVec3>) -> Option<(IVec3, IVec3, f64)> {
+fn grid_dda(g: &ClientGrid, o: DVec3, d: DVec3, max: f64, skip: Option<IVec3>) -> Option<(IVec3, IVec3, f64)> {
     let d = d.normalize();
     let p = o + DVec3::splat(0.5);
     let mut cell = p.floor().as_ivec3();
@@ -447,7 +468,7 @@ fn grid_dda(blocks: &HashMap<IVec3, BlockData>, o: DVec3, d: DVec3, max: f64, sk
     let mut guard = 0;
     while t <= max && guard < 4096 {
         guard += 1;
-        if blocks.contains_key(&cell) && Some(cell) != skip {
+        if g.anchor_at(cell).is_some_and(|a| Some(a) != skip) {
             return Some((cell, normal, t));
         }
         if t_max.x < t_max.y && t_max.x < t_max.z {
@@ -478,11 +499,36 @@ mod tests {
         BlockData { id: 1, kind: BlockKind::Armor, cell, rot: 0, name: "a".into() }
     }
 
+    fn grid(blocks: Vec<BlockData>) -> ClientGrid {
+        let mut g = ClientGrid {
+            id: 1,
+            is_static: true,
+            blocks: HashMap::new(),
+            by_id: HashMap::new(),
+            occupied: HashMap::new(),
+            states: VecDeque::new(),
+            dirty: false,
+        };
+        for b in blocks {
+            g.add_block(b);
+        }
+        g
+    }
+
+    #[test]
+    fn dda_hits_large_blocks() {
+        // A 2x2x2 thruster facing -Z at the origin covers x 0..1, y 0..1, z 0..1.
+        let rot = shared::orient::from_axes(IVec3::NEG_Z, IVec3::Y).unwrap();
+        let g = grid(vec![BlockData { id: 7, kind: BlockKind::LargeThruster, cell: IVec3::ZERO, rot, name: "L".into() }]);
+        let (c, n, _) = grid_dda(&g, DVec3::new(1.0, 1.0, -5.0), DVec3::Z, 10.0, None).unwrap();
+        assert_eq!((c, n), (IVec3::new(1, 1, 0), IVec3::NEG_Z));
+        assert_eq!(g.anchor_at(IVec3::new(1, 1, 1)), Some(IVec3::ZERO));
+        assert_eq!(g.anchor_at(IVec3::new(0, 0, -1)), None);
+    }
+
     #[test]
     fn dda_hits_faces() {
-        let mut blocks = HashMap::new();
-        blocks.insert(IVec3::new(0, 0, 0), block(IVec3::ZERO));
-        blocks.insert(IVec3::new(1, 0, 0), block(IVec3::X));
+        let blocks = grid(vec![block(IVec3::ZERO), block(IVec3::X)]);
         let (c, n, t) = grid_dda(&blocks, DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, 10.0, None).unwrap();
         assert_eq!((c, n), (IVec3::ZERO, IVec3::Z));
         assert!((t - 4.5).abs() < 1e-9);

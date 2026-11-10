@@ -25,7 +25,7 @@ impl World {
         let body = self.phys.insert_body(body);
         self.grids.insert(
             id,
-            Grid { id, body, is_static, blocks: HashMap::new(), cruise: false, mount: None },
+            Grid { id, body, is_static, blocks: HashMap::new(), cruise: false, mount: None, occupied: HashMap::new() },
         );
         self.events.push(WorldEvent::GridAdded(id));
         id
@@ -50,15 +50,16 @@ impl World {
         });
         self.next_block = self.next_block.max(id + 1);
         let g = self.grids.get_mut(&grid).expect("grid exists");
-        let col = ColliderBuilder::cuboid(BLOCK_HALF, BLOCK_HALF, BLOCK_HALF)
-            .translation(cell.as_dvec3() * shared::CELL_SIZE)
+        let half = BLOCK_HALF + (kind.size() - 1) as f64 * 0.5;
+        let col = ColliderBuilder::cuboid(half, half, half)
+            .translation((cell.as_dvec3() + kind.center_offset(rot)) * shared::CELL_SIZE)
             .mass(kind.mass())
             .friction(0.8)
             .user_data(id as u128)
             .build();
         let collider = self.phys.insert_collider(col, Some(g.body));
         let state = match kind {
-            BlockKind::Thruster => BlockState::Thruster(Thruster { override_: 0.0, demand: 0.0, output: 0.0 }),
+            k if k.is_thruster() => BlockState::Thruster(Thruster { override_: 0.0, demand: 0.0, output: 0.0 }),
             k if k.is_mech() => BlockState::Mech(Mech {
                 top: None,
                 joint: None,
@@ -88,7 +89,11 @@ impl World {
         let name = name.unwrap_or_else(|| self.default_name(grid, kind));
         let block = Block { id, kind, cell, rot, name, collider, state };
         let data = block.data();
-        self.grids.get_mut(&grid).unwrap().blocks.insert(cell, block);
+        let g = self.grids.get_mut(&grid).unwrap();
+        for c in kind.footprint(cell, rot).into_iter().skip(1) {
+            g.occupied.insert(c, cell);
+        }
+        g.blocks.insert(cell, block);
         self.block_loc.insert(id, (grid, cell));
         self.events.push(WorldEvent::BlockAdded { grid, block: data });
         if with_head && kind.is_mech() {
@@ -195,7 +200,11 @@ impl World {
     /// Remove a block without validation. Cleans up joints, seats and empty grids.
     pub(crate) fn delete_block(&mut self, grid: GridId, cell: IVec3) {
         let Some(g) = self.grids.get_mut(&grid) else { return };
+        let Some(cell) = g.anchor_at(cell) else { return };
         let Some(block) = g.blocks.remove(&cell) else { return };
+        for c in block.kind.footprint(cell, block.rot).into_iter().skip(1) {
+            g.occupied.remove(&c);
+        }
         self.block_loc.remove(&block.id);
         self.phys.remove_collider(block.collider);
         match &block.state {
@@ -266,27 +275,29 @@ impl World {
             return Err("that block cannot be built".into());
         }
         let g = self.grids.get(&grid).ok_or("no such grid")?;
-        if g.blocks.contains_key(&cell) {
+        let rot = rot % orient::ORIENTATION_COUNT;
+        let cells = kind.footprint(cell, rot);
+        if cells.iter().any(|c| g.is_taken(*c)) {
             return Err("cell is occupied".into());
         }
-        let neighbour = orient::DIRS.iter().any(|d| g.blocks.contains_key(&(cell + *d)));
+        let neighbour = cells.iter().any(|c| orient::DIRS.iter().any(|d| g.is_taken(*c + *d)));
         if !neighbour {
             return Err("blocks must touch the grid".into());
         }
         if kind.is_mech() {
             // The head would overlap a block.
-            if g.blocks.contains_key(&(cell + orient::forward(rot))) {
+            if g.is_taken(cell + orient::forward(rot)) {
                 return Err("no room for the head".into());
             }
         }
         let wp = self.phys.bodies[g.body].position().transform_point(cell.as_dvec3());
         self.check_reach(player, wp)?;
-        Ok(self.insert_block(grid, cell, rot % orient::ORIENTATION_COUNT, kind, None, None, true))
+        Ok(self.insert_block(grid, cell, rot, kind, None, None, true))
     }
 
     pub fn remove_block(&mut self, player: PlayerId, grid: GridId, cell: IVec3) -> Result<(), String> {
         let g = self.grids.get(&grid).ok_or("no such grid")?;
-        if !g.blocks.contains_key(&cell) {
+        if !g.is_taken(cell) {
             return Err("no block there".into());
         }
         let wp = self.phys.bodies[g.body].position().transform_point(cell.as_dvec3());

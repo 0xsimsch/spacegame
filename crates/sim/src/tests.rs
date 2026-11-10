@@ -591,13 +591,13 @@ fn drone_follows_player() {
 }
 
 #[test]
-fn frigate_big_ship() {
+fn cruiser_big_ship() {
     let mut w = World::new();
     let ground = above("Earth", 0.0);
     let rot = prefabs::surface_orientation(ground);
     let up = rot * DVec3::Y;
     let t0 = std::time::Instant::now();
-    let g = w.spawn_prefab("frigate", ground + up * 1.6, rot, None).unwrap();
+    let g = w.spawn_prefab("cruiser", ground + up * 1.6, rot, None).unwrap();
     let spawn_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let group = w.mech_group(g);
     let parts: usize = group.iter().map(|id| w.grids[id].blocks.len()).sum();
@@ -606,7 +606,7 @@ fn frigate_big_ship() {
     let lift = w.grids[&g].blocks.values().filter(|b| b.kind == BlockKind::Thruster && orient::forward(b.rot) == IVec3::Y).count();
     let twr = lift as f64 * shared::blocks::THRUSTER_MAX_FORCE / (mass * 9.81);
     eprintln!(
-        "frigate: {parts} parts ({} armor, {} thrusters, {lift} lift, {} doors), {:.0} t, lift T/W {twr:.2}, spawned in {spawn_ms:.0} ms",
+        "cruiser: {parts} parts ({} armor, {} thrusters, {lift} lift, {} doors), {:.0} t, lift T/W {twr:.2}, spawned in {spawn_ms:.0} ms",
         count(BlockKind::Armor),
         count(BlockKind::Thruster),
         count(BlockKind::Door),
@@ -614,7 +614,7 @@ fn frigate_big_ship() {
     );
     assert!(parts >= 3000, "at least 3000 parts: {parts}");
     assert!(twr > 1.3, "can lift off Earth: T/W {twr:.2}");
-    let pb = w.grids[&g].blocks.values().find(|b| b.name == "Frigate Computer").unwrap().id;
+    let pb = w.grids[&g].blocks.values().find(|b| b.name == "Cruiser Computer").unwrap().id;
     assert_eq!(w.script_info(pb).unwrap().error, None);
     let t = std::time::Instant::now();
     let bytes = w.save_bytes();
@@ -633,14 +633,15 @@ fn frigate_big_ship() {
 
     // A player outside, 40 m to starboard and 10 m up: both turrets aim at them.
     w.add_player(1, "target");
-    let target = w.grid_pose(g).unwrap().transform_point(DVec3::new(40.0, 12.0, 0.0));
+    // High enough that the far-side turret's barrel clears the hull roof.
+    let target = w.grid_pose(g).unwrap().transform_point(DVec3::new(40.0, 30.0, 0.0));
     w.teleport_player(1, target);
     let mut aim_errors = Vec::new();
     for _ in 0..(4 * 60) {
         w.teleport_player(1, target); // hold still against gravity
         w.step();
     }
-    for i in 1..=2 {
+    for i in 1..=4 {
         let hinge = w.grids.values().flat_map(|g| g.blocks.values()).find(|b| b.name == format!("Turret {i} Hinge")).unwrap().id;
         let barrel = match &w.block(hinge).unwrap().1.state {
             BlockState::Mech(m) => m.top.unwrap(),
@@ -655,7 +656,7 @@ fn frigate_big_ship() {
     assert!(aim_errors.iter().all(|e| *e < 4.0), "turrets aim at the player: {aim_errors:?}");
 
     // Fly it from the bridge: climb for 5 s, then let the dampeners hold it.
-    let bridge = w.grids[&g].blocks.values().find(|b| b.name == "Frigate Bridge").unwrap().id;
+    let bridge = w.grids[&g].blocks.values().find(|b| b.name == "Cruiser Bridge").unwrap().id;
     w.enter_seat_unchecked(1, bridge).unwrap();
     let mut input = PlayerInput { movement: glam::Vec3::Y, dampeners: true, look: DQuat::IDENTITY, ..Default::default() };
     w.set_input(1, input.clone());
@@ -670,4 +671,37 @@ fn frigate_big_ship() {
     assert!(alt > alt0 + 15.0, "climbed: {alt:.1}");
     assert!(v < 1.0, "dampeners hold it: {v:.2}");
     assert!(tilt_deg(&w, g) < 5.0);
+}
+
+#[test]
+fn large_thruster_blocks() {
+    let mut w = World::new();
+    w.add_player(1, "builder");
+    let p = w.player_pos(1).unwrap();
+    let g = w.new_grid(1, p + DVec3::X * 4.0, DQuat::IDENTITY, BlockKind::Armor, true).unwrap();
+    let fwd_neg_z = ident();
+    // A 2x2x2 thruster behind the armour block: covers x 0..1, y 0..1, z 1..2.
+    let lt = w.place_block(1, g, IVec3::new(0, 0, 1), fwd_neg_z, BlockKind::LargeThruster).unwrap();
+    assert!(w.place_block(1, g, IVec3::new(1, 1, 2), fwd_neg_z, BlockKind::Armor).is_err(), "covered cell is occupied");
+    assert!(w.place_block(1, g, IVec3::new(1, 1, 3), fwd_neg_z, BlockKind::Armor).is_ok(), "touching the large block is fine");
+    // Removing it through any covered cell frees all eight.
+    w.remove_block(1, g, IVec3::new(1, 1, 2)).unwrap();
+    assert!(w.block(lt).is_none());
+    assert!(w.grids[&g].occupied.is_empty());
+
+    // In space it pushes 200 kN through the centre of its 2x2 face.
+    let s = w.create_grid(deep_space(), DQuat::IDENTITY, false, None);
+    let lt = w.insert_block(s, IVec3::ZERO, fwd_neg_z, BlockKind::LargeThruster, None, None, false);
+    let mass = w.phys.bodies[w.grids[&s].body].mass();
+    assert!((mass - 900.0).abs() < 1.0);
+    w.set_block_prop(lt, BlockProp::ThrusterOverride(1.0)).unwrap();
+    run(&mut w, 0.5); // 222 m/s^2: a full second would hit the 150 m/s speed cap
+    let body = &w.phys.bodies[w.grids[&s].body];
+    let v = body.linvel();
+    eprintln!("after 0.5 s: velocity {v:.3?}, spin {:.4}", body.angvel().length());
+    assert!((v.z + 0.5 * 200_000.0 / 900.0).abs() < 2.0, "accelerates along -Z at F/m");
+    assert!(body.angvel().length() < 1e-3, "force through the centre of mass: no spin");
+    // Saves and loads with its footprint.
+    let w2 = World::load_bytes(&w.save_bytes()).unwrap();
+    assert_eq!(w2.grids[&s].occupied.len(), 7);
 }

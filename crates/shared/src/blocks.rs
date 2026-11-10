@@ -1,5 +1,7 @@
 //! Static block definitions.
 
+use crate::orient;
+use glam::{DVec3, IVec3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -24,10 +26,13 @@ pub enum BlockKind {
     Door,
     /// Detects players within a configurable range (read by scripts).
     Sensor,
+    /// A 2x2x2 thruster: the anchor cell is its front-left-bottom corner,
+    /// it extends to the right, up and backwards (toward the nozzle).
+    LargeThruster,
 }
 
 /// Blocks the player can pick in build mode, in hot-bar order.
-pub const BUILDABLE: [BlockKind; 10] = [
+pub const BUILDABLE: [BlockKind; 11] = [
     BlockKind::Armor,
     BlockKind::Thruster,
     BlockKind::Piston,
@@ -38,10 +43,13 @@ pub const BUILDABLE: [BlockKind; 10] = [
     BlockKind::Gyro,
     BlockKind::Door,
     BlockKind::Sensor,
+    BlockKind::LargeThruster,
 ];
 
 /// Maximum thrust of one thruster in newtons.
 pub const THRUSTER_MAX_FORCE: f64 = 30_000.0;
+/// The 2x2x2 thruster: 8 cells of volume, but almost 7x the force of a small one.
+pub const LARGE_THRUSTER_MAX_FORCE: f64 = 200_000.0;
 /// Piston travel range in metres (extension beyond the rest position).
 pub const PISTON_MIN: f64 = 0.0;
 pub const PISTON_MAX: f64 = 5.0;
@@ -66,6 +74,45 @@ impl BlockKind {
         matches!(self, BlockKind::Piston | BlockKind::Hinge | BlockKind::Rotor)
     }
 
+    pub fn is_thruster(self) -> bool {
+        matches!(self, BlockKind::Thruster | BlockKind::LargeThruster)
+    }
+
+    /// Maximum thrust in newtons (0 for non-thrusters).
+    pub fn thrust(self) -> f64 {
+        match self {
+            BlockKind::Thruster => THRUSTER_MAX_FORCE,
+            BlockKind::LargeThruster => LARGE_THRUSTER_MAX_FORCE,
+            _ => 0.0,
+        }
+    }
+
+    /// Edge length in cells (blocks are cubes of 1 or 2 cells).
+    pub fn size(self) -> i32 {
+        if self == BlockKind::LargeThruster { 2 } else { 1 }
+    }
+
+    /// Cells covered by a block at `cell` with orientation `rot` (the anchor first).
+    pub fn footprint(self, cell: IVec3, rot: u8) -> Vec<IVec3> {
+        let n = self.size();
+        let (r, u, b) = (orient::right(rot), orient::up(rot), -orient::forward(rot));
+        let mut out = Vec::with_capacity((n * n * n) as usize);
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    out.push(cell + r * x + u * y + b * z);
+                }
+            }
+        }
+        out
+    }
+
+    /// Centre of the block relative to its anchor cell, in grid coordinates.
+    pub fn center_offset(self, rot: u8) -> DVec3 {
+        let h = (self.size() - 1) as f64 * 0.5;
+        (orient::right(rot).as_dvec3() + orient::up(rot).as_dvec3() - orient::forward(rot).as_dvec3()) * h
+    }
+
     /// Joints measured in degrees (hinges and rotors).
     pub fn is_angular(self) -> bool {
         matches!(self, BlockKind::Hinge | BlockKind::Rotor)
@@ -86,6 +133,7 @@ impl BlockKind {
             BlockKind::Gyro => 300.0,
             BlockKind::Door => 80.0,
             BlockKind::Sensor => 120.0,
+            BlockKind::LargeThruster => 900.0,
         }
     }
 
@@ -104,6 +152,7 @@ impl BlockKind {
             BlockKind::Gyro => "Gyroscope",
             BlockKind::Door => "Door",
             BlockKind::Sensor => "Sensor",
+            BlockKind::LargeThruster => "Large Thruster",
         }
     }
 
@@ -123,6 +172,8 @@ impl BlockKind {
             BlockKind::Gyro => "gyro",
             BlockKind::Door => "door",
             BlockKind::Sensor => "sensor",
+            // Scripts treat both sizes as thrusters (`.max_thrust` tells them apart).
+            BlockKind::LargeThruster => "thruster",
         }
     }
 
@@ -148,6 +199,7 @@ impl BlockKind {
             BlockKind::Gyro => [0.85, 0.75, 0.2],
             BlockKind::Door => [0.45, 0.5, 0.55],
             BlockKind::Sensor => [0.15, 0.7, 0.75],
+            BlockKind::LargeThruster => [0.3, 0.31, 0.36],
         }
     }
 }

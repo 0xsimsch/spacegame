@@ -121,6 +121,19 @@ pub struct Grid {
     pub cruise: bool,
     /// If this grid is the head of a piston/hinge: the mechanical block it hangs on.
     pub mount: Option<BlockId>,
+    /// Extra cells covered by multi-cell blocks, mapped to their anchor cell.
+    pub occupied: HashMap<IVec3, IVec3>,
+}
+
+impl Grid {
+    /// Anchor cell of the block covering `cell`, if any.
+    pub fn anchor_at(&self, cell: IVec3) -> Option<IVec3> {
+        if self.blocks.contains_key(&cell) { Some(cell) } else { self.occupied.get(&cell).copied() }
+    }
+
+    pub fn is_taken(&self, cell: IVec3) -> bool {
+        self.anchor_at(cell).is_some()
+    }
 }
 
 #[derive(Debug)]

@@ -49,6 +49,8 @@ struct BlockNode {
     door: Option<Gd<Node3D>>,
     /// Sensor "eye" that lights up while it detects someone.
     eye: Option<Gd<Node3D>>,
+    /// Edge length in cells (2 for the large thruster).
+    size: f32,
 }
 
 struct GridNode {
@@ -265,6 +267,7 @@ impl INode3D for SpaceGame {
                 Key::K => self.open_panel_for_target(),
                 Key::V => self.third_person = !self.third_person,
                 Key::KEY_0 => self.build_kind = 9,
+                Key::MINUS => self.build_kind = 10,
                 k @ (Key::KEY_1 | Key::KEY_2 | Key::KEY_3 | Key::KEY_4 | Key::KEY_5 | Key::KEY_6 | Key::KEY_7 | Key::KEY_8 | Key::KEY_9) => {
                     self.build_kind = (k.ord() - Key::KEY_1.ord()) as usize;
                     self.build_mode = true;
@@ -542,9 +545,12 @@ impl SpaceGame {
                 let v = self.st.values.get(bid).copied().unwrap_or(0.0);
                 if let Some(f) = &mut bn.flame {
                     f.set_visible(v > 0.01);
-                    let len = 0.2 + v * 1.4;
-                    f.set_scale(Vector3::new(0.35, len, 0.35));
-                    f.set_position(Vector3::new(0.0, 0.0, 0.5 + len * 0.5));
+                    let s = bn.size;
+                    let len = (0.2 + v * 1.4) * s;
+                    f.set_scale(Vector3::new(0.35 * s, len, 0.35 * s));
+                    // Large thrusters: centred on the 2x2 face, nozzle ends at z = 1.5.
+                    let (c, back) = if s > 1.0 { (0.5, 1.5) } else { (0.0, 0.5) };
+                    f.set_position(Vector3::new(c, c, back + len * 0.5));
                 }
                 if let Some(d) = &mut bn.door {
                     // value 1 = open: the panel tucks into the top of the frame.
@@ -660,17 +666,31 @@ impl SpaceGame {
             // Only blocks with animated parts (or a seat) get their own node.
             let needs_node = matches!(
                 b.kind,
-                BlockKind::Thruster | BlockKind::Piston | BlockKind::Door | BlockKind::Sensor | BlockKind::Cockpit
+                BlockKind::Thruster
+                    | BlockKind::LargeThruster
+                    | BlockKind::Piston
+                    | BlockKind::Door
+                    | BlockKind::Sensor
+                    | BlockKind::Cockpit
             );
             let mut bn = Node3D::new_alloc();
             bn.set_position(bpos);
             bn.set_quaternion(bq);
-            let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None, eye: None };
+            let mut node = BlockNode { root: bn.clone(), flame: None, shaft: None, door: None, eye: None, size: b.kind.size() as f32 };
             match b.kind {
                 BlockKind::Thruster => {
                     stat(&cube, mat, Vector3::new(0.0, 0.0, -0.15), Vector3::new(1.0, 1.0, 0.7), None);
                     stat(&nozzle, &vis.dark, Vector3::new(0.0, 0.0, 0.3), Vector3::new(1.0, 0.4, 1.0), Some(along_z));
                     let f = add(&mut bn, &nozzle, &vis.flame, Vector3::new(0.0, 0.0, 0.8), Vector3::splat(0.3), Some(along_z));
+                    node.flame = Some(f);
+                }
+                BlockKind::LargeThruster => {
+                    // Local frame: the block spans x 0..1, y 0..1, z 0..1 (+Z = nozzle side).
+                    let c = Vector3::new(0.5, 0.5, 0.0);
+                    stat(&cube, mat, c + Vector3::new(0.0, 0.0, 0.2), Vector3::new(2.0, 2.0, 1.4), None);
+                    stat(&cube, &vis.dark, c + Vector3::new(0.0, 0.0, -0.5), Vector3::new(1.5, 1.5, 0.06), None);
+                    stat(&nozzle, &vis.dark, c + Vector3::new(0.0, 0.0, 1.2), Vector3::new(2.1, 0.6, 2.1), Some(along_z));
+                    let f = add(&mut bn, &nozzle, &vis.flame, c + Vector3::new(0.0, 0.0, 1.8), Vector3::splat(0.8), Some(along_z));
                     node.flame = Some(f);
                 }
                 BlockKind::Piston => {
@@ -817,16 +837,20 @@ impl SpaceGame {
             }
             return;
         }
+        let kind = BUILDABLE[self.build_kind];
         let (pos, rot) = match &hit {
             Some(h) => {
                 let Some(gp) = self.st.grid_pose(h.grid) else { return };
                 let cell = h.cell + h.normal;
-                (gp.transform(cell.as_dvec3()), gp.rot * orient::quat(self.build_rot))
+                let center = cell.as_dvec3() + kind.center_offset(self.build_rot);
+                (gp.transform(center), gp.rot * orient::quat(self.build_rot))
             }
             None => {
                 let pos = self.eye_world + self.look * orient::FORWARD * 4.0;
                 let rot = self.snap_new_grid_rot(pos, self.look);
-                (pos, rot)
+                // A new grid's first block is anchored at its origin cell.
+                let ident = orient::from_axes(IVec3::NEG_Z, IVec3::Y).unwrap();
+                (pos + rot * kind.center_offset(ident), rot)
             }
         };
         let vis = self.vis.as_ref().unwrap();
@@ -835,7 +859,7 @@ impl SpaceGame {
         ghost.set_material_override(&vis.ghost_ok);
         ghost.set_position(v3(pos - self.cam_world));
         ghost.set_quaternion(quat(rot));
-        ghost.set_scale(Vector3::splat(1.02));
+        ghost.set_scale(Vector3::splat(1.02 * kind.size() as f32));
         let _ = vis.ghost_bad.clone();
     }
 
@@ -1131,7 +1155,7 @@ impl SpaceGame {
             let kind = BUILDABLE[self.build_kind];
             let f = orient::forward(self.build_rot);
             s += &format!(
-                "BUILD: {} (1-0 / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
+                "BUILD: {} (1-0, - / wheel)  facing {:?} [R]/[T] rotate  new grids: {} [B]\nLMB place  RMB remove  [G] exit build mode\n",
                 kind.display_name(),
                 f,
                 if self.build_static { "STATION (static)" } else { "SHIP (dynamic)" }

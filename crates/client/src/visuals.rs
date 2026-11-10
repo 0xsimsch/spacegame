@@ -84,6 +84,7 @@ impl Visuals {
             BlockKind::Gyro,
             BlockKind::Door,
             BlockKind::Sensor,
+            BlockKind::LargeThruster,
         ];
         let block_mats = all.iter().map(|k| (*k, material(k.color(), 0.0, 1.0))).collect();
         Self {

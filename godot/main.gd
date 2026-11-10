@@ -6,17 +6,17 @@ const HELP_TEXT := """[b]Controls[/b]
 WASD move, Space up, C down, Q/E roll (zero-g), mouse look
 J jetpack on/off (off = walk on planets, Space jumps)
 Z inertial dampeners, X cruise mode (raises speed cap to 5 km/s)
-G build mode: 1-9, 0 or mouse wheel pick block (5 rotor, 8 gyroscope, 9 door, 0 sensor), R/T rotate, B ship/station
+G build mode: 1-9, 0, - or mouse wheel pick block (5 rotor, 8 gyro, 9 door, 0 sensor, - large 2x2x2 thruster), R/T rotate, B ship/station
     LMB place (on a block, or in empty space to start a new grid), RMB remove
 V first/third person (third person: mouse wheel zooms, up to 300 m when seated)
 F use: sit in cockpit / open-close door / edit programmable block / control a block
 K control panel of the grid you look at (or are seated in)
-Enter chat & commands (/help, /tp moon, /spawn ship hover, /spawn drone, /spawn frigate, /save)
+Enter chat & commands (/help, /tp moon, /spawn ship hover, /spawn drone, /spawn cruiser, /save)
 F3 stats overlay, Esc menu
 
 [b]Scripting[/b] (Luau) - see the examples in the script editor:
   grid:block(name), grid:blocks(type?)  -> blocks of this grid and its sub-grids
-  thruster:set_override(0..1), .max_thrust, .current_thrust, .forward
+  thruster:set_override(0..1), .max_thrust (30 kN small, 200 kN large), .current_thrust, .forward
   piston:set_velocity(m/s), .extension, .min, .max
   hinge:set_velocity(deg/s), hinge:set_target_angle(deg | nil), .angle   (-90..90)
   rotor: same as hinge but spins forever; .angle wraps at -180..180, targets take the short way

@@ -42,9 +42,9 @@ impl World {
                 let (mut sensor_range, mut sensed) = (0.0, Vec::new());
                 match &b.state {
                     BlockState::Thruster(t) => {
-                        info_thr = THRUSTER_MAX_FORCE;
+                        info_thr = b.kind.thrust();
                         thr_override = t.override_;
-                        thr_out = t.output * THRUSTER_MAX_FORCE;
+                        thr_out = t.output * b.kind.thrust();
                     }
                     BlockState::Mech(m) if b.kind == BlockKind::Piston => {
                         pp = m.value;
